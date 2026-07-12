@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pydantic>=2
+python-dotenv
+google-genai
+opencv-python-headless
+easyocr
+numpy
+Pillow
+websockets
