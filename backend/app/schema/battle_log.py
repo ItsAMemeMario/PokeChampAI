@@ -43,12 +43,10 @@ class SwitchOutEvent(BattleLogEventBase):
     type: Literal["switch_out"] = "switch_out"
     pokemon: Pokemon
 
-Effectiveness = Literal["mostly ineffective", "not very effective", "neutral", "super effective", "extremely effective"]
 class DamageDealtEvent(BattleLogEventBase):
     type: Literal["damage_dealt"] = "damage_dealt"
     pokemon: Pokemon
     hp_pct_dealt: int = Field(ge=0, le=100)
-    effectiveness: Effectiveness = "neutral"
 
 
 class StatChangeEvent(BattleLogEventBase):
