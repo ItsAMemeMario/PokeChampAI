@@ -5,7 +5,7 @@ from typing import Annotated, List, Literal, Union
 
 from pydantic import BaseModel, Field, TypeAdapter
 
-from app.schema.common import Pokemon
+from app.schema.common import Side, Pokemon
 
 class BattleLogEventBase(BaseModel):
     raw_text: str
