@@ -90,7 +90,7 @@ class TrickRoomChangeEvent(BattleLogEventBase):
     type: Literal["trick_room_change"] = "trick_room_change"
     active: bool
 
-class FieldEvent: WeatherChangeEvent | TerrainChangeEvent | TrickRoomChangeEvent
+FieldEvent = Union[WeatherChangeEvent, TerrainChangeEvent, TrickRoomChangeEvent]
 
 class SideConditionEvent(BattleLogEventBase):
     type: Literal["side_condition"] = "side_condition"
