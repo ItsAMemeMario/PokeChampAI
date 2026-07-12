@@ -5,14 +5,7 @@ from typing import Annotated, List, Literal, Union
 
 from pydantic import BaseModel, Field, TypeAdapter
 
-
-Side = Literal["player", "opponent"]
-Slot = Literal[1, 2]
-
-class Pokemon(BaseModel):
-    species: str
-    side: Side
-    slot: Slot
+from app.schema.common import Pokemon
 
 class BattleLogEventBase(BaseModel):
     raw_text: str
@@ -23,6 +16,9 @@ class TurnStartEvent(BattleLogEventBase):
     type: Literal["turn_start"] = "turn_start"
     turn_number: int
 
+class MegaEvolutionEvent(BattleLogEventBase):
+    type: Literal["mega_evolution"] = "mega_evolution"
+    pokemon: Pokemon
 
 class MoveUsedEvent(BattleLogEventBase):
     type: Literal["move_used"] = "move_used"
@@ -105,6 +101,7 @@ class SideConditionEvent(BattleLogEventBase):
 BattleLogEvent = Annotated[
     Union[
         TurnStartEvent,
+        MegaEvolutionEvent,
         MoveUsedEvent,
         AbilityTriggeredEvent,
         SwitchInEvent,
