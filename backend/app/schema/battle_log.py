@@ -43,11 +43,15 @@ class SwitchOutEvent(BattleLogEventBase):
     type: Literal["switch_out"] = "switch_out"
     pokemon: Pokemon
 
-class DamageDealtEvent(BattleLogEventBase):
-    type: Literal["damage_dealt"] = "damage_dealt"
+class ItemUsedEvent(BattleLogEventBase):
+    type: Literal["item_used"] = "item_used"
     pokemon: Pokemon
-    hp_pct_dealt: int = Field(ge=0, le=100)
+    item: str
 
+class HPChangeEvent(BattleLogEventBase):
+    type: Literal["hp_change"] = "hp_change"
+    pokemon: Pokemon
+    hp_pct_change: int = Field(ge=-100, le=100)
 
 class StatChangeEvent(BattleLogEventBase):
     type: Literal["stat_change"] = "stat_change"
@@ -104,7 +108,8 @@ BattleLogEvent = Annotated[
         AbilityTriggeredEvent,
         SwitchInEvent,
         SwitchOutEvent,
-        DamageDealtEvent,
+        ItemUsedEvent,
+        HPChangeEvent,
         StatChangeEvent,
         StatusAppliedEvent,
         VolatileAppliedEvent,
