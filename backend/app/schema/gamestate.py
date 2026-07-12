@@ -36,6 +36,11 @@ class BenchedPokemon(BaseModel):
     revealed_item: Optional[str] = None
     revealed_moves: List[str] = Field(default_factory=list)
 
+class Hazards(BaseModel):
+    spikes: Literal[0, 1]
+    toxic_spikes: Literal[0, 1, 2]
+    stealth_rocks: Literal[0, 1]
+
 class SideState(BaseModel):
     # Explicit slots make targeting logic much easier for the LLM
     slot_1: Optional[ActivePokemon] = None 
@@ -44,6 +49,7 @@ class SideState(BaseModel):
     tailwind_turns: int = 0
     reflect_turns: int = 0
     light_screen_turns: int = 0
+    hazards: Hazards
 
 class FieldState(BaseModel):
     weather: Literal["none", "sun", "rain", "sand", "snow"] = "none"
