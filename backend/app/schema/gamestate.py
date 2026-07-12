@@ -10,6 +10,7 @@ class StatStages(BaseModel):
     evasion: int = Field(0, ge=-6, le=6)
     accuracy: int = Field(0, ge=-6, le=6)
 
+# Pokemon currently active on the field
 class ActivePokemon(BaseModel):
     species: str
     hp_percentage: int = Field(ge=0, le=100)
@@ -23,6 +24,8 @@ class ActivePokemon(BaseModel):
     revealed_item: Optional[str] = None
     revealed_moves: List[str] = Field(default_factory=list)
 
+# Pokemon currently on the bench
+# For the opponent, these are added as active pokemon are benched
 class BenchedPokemon(BaseModel):
     species: str
     hp_percentage: int = Field(ge=0, le=100)
