@@ -11,7 +11,6 @@ class PlayerPokemon(BaseModel):
     species: str
     item: str
     ability: str
-    level: int
     evs: dict[str, int]
     nature: str
     moves: list[str]
@@ -35,7 +34,6 @@ def player_pokemon_from_dict(data: dict) -> PlayerPokemon:
         species=data["species"],
         item=data["item"],
         ability=data["ability"],
-        level=data["level"],
         evs=data["evs"],
         nature=data["nature"],
         moves=data["moves"],

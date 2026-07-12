@@ -5,7 +5,7 @@ import re
 POKEPASTE_RE = re.compile(r"""
     ^(?P<species>.+?)\s*@\s*(?P<item>.+?)\s*\n     # Capture Species and Item
     Ability:\s*(?P<ability>.+?)\s*\n               # Capture Ability
-    Level:\s*(?P<level>\d+)\s*\n                   # Capture Level
+    (?:Level:\s*\d+\s*\n)?                         # Optional Level line (ignored; VGC is always 50)
     EVs:\s*(?P<evs>.+?)\s*\n                       # Capture EVs string
     (?P<nature>[A-Za-z]+)\s+Nature\s*\n            # Capture Nature
     (?P<moves>(?:-\s+.+(?:\n|$))+)                 # Capture all moves as a single block
@@ -26,15 +26,12 @@ def parse(pokepaste):
         # Extract the named capture groups into a dictionary
         pokemon = match.groupdict()
         
-        # 1. Clean up the Level into an integer
-        pokemon['level'] = int(pokemon['level'])
-        
-        # 2. Convert the Moves block into a list of strings
+        # 1. Convert the Moves block into a list of strings
         # Splits "- Earthquake\n- Protect" into ["Earthquake", "Protect"]
         raw_moves = pokemon['moves'].strip().split('\n')
         pokemon['moves'] = [move.replace('- ', '').strip() for move in raw_moves]
         
-        # 3. Convert the EVs string into a dictionary
+        # 2. Convert the EVs string into a dictionary
         # Splits "252 Atk / 4 SpD / 252 Spe" into {"Atk": 252, "SpD": 4, "Spe": 252}
         ev_dict = {}
         for stat_chunk in pokemon['evs'].split('/'):
@@ -50,7 +47,6 @@ def parse(pokepaste):
 # strict_paste = """
 # Garchomp @ Lum Berry
 # Ability: Rough Skin
-# Level: 50
 # EVs: 252 Atk / 4 SpD / 252 Spe
 # Jolly Nature
 # - Earthquake
@@ -60,7 +56,6 @@ def parse(pokepaste):
 
 # Incineroar @ Sitrus Berry
 # Ability: Intimidate
-# Level: 50
 # EVs: 252 HP / 68 Def / 140 SpD
 # Careful Nature
 # - Flare Blitz
@@ -76,7 +71,6 @@ def parse(pokepaste):
 #     "species": "Garchomp",
 #     "item": "Lum Berry",
 #     "ability": "Rough Skin",
-#     "level": 50,
 #     "evs": {
 #       "Atk": 252,
 #       "SpD": 4,
@@ -94,7 +88,6 @@ def parse(pokepaste):
 #     "species": "Incineroar",
 #     "item": "Sitrus Berry",
 #     "ability": "Intimidate",
-#     "level": 50,
 #     "evs": {
 #       "HP": 252,
 #       "Def": 68,
