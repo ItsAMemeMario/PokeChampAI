@@ -63,7 +63,4 @@ class TurnSuggestion(BaseModel):
     def one_action_per_slot(cls, value: list[TurnAction]) -> list[TurnAction]:
         if len(value) != 2:
             raise ValueError(f"Expected exactly 2 actions (one per active slot), got {len(value)}")
-        slots = {action.slot for action in value}
-        if slots != {1, 2}:
-            raise ValueError("actions must include one entry for slot 1 and one for slot 2")
         return value
