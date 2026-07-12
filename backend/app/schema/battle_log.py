@@ -47,8 +47,8 @@ Effectiveness = Literal["mostly ineffective", "not very effective", "neutral", "
 class DamageDealtEvent(BattleLogEventBase):
     type: Literal["damage_dealt"] = "damage_dealt"
     pokemon: Pokemon
-    hp_pct_after: int = Field(ge=0, le=100)
-    effectiveness: Effectiveness
+    hp_pct_dealt: int = Field(ge=0, le=100)
+    effectiveness: Effectiveness = "neutral"
 
 
 class StatChangeEvent(BattleLogEventBase):
