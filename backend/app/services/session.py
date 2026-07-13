@@ -50,6 +50,7 @@ class SessionStore:
 
     def stop_monitoring(self) -> None:
         self.cv_running = False
+        self.adb_connected = False
         self.phase = BattlePhase.IDLE
 
 

@@ -1,0 +1,68 @@
+{
+  "resolution": [
+    1600,
+    900
+  ],
+  "regions": {
+    "battle_text": [
+      171,
+      626,
+      1250,
+      183
+    ],
+    "fight_button": [
+      1401,
+      448,
+      174,
+      178
+    ],
+    "opponent_side_banner": [
+      1112,
+      315,
+      473,
+      231
+    ],
+    "opponent_slot_1_card": [
+      890,
+      16,
+      348,
+      134
+    ],
+    "opponent_slot_2_card": [
+      1235,
+      21,
+      337,
+      117
+    ],
+    "opponent_team_preview": [
+      980,
+      60,
+      580,
+      720
+    ],
+    "player_side_banner": [
+      11,
+      321,
+      438,
+      229
+    ],
+    "player_slot_1_card": [
+      26,
+      758,
+      346,
+      122
+    ],
+    "player_slot_2_card": [
+      358,
+      756,
+      348,
+      123
+    ],
+    "team_preview_prompt": [
+      536,
+      166,
+      300,
+      108
+    ]
+  }
+}
