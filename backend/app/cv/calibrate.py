@@ -52,6 +52,7 @@ REGION_COLORS: dict[str, tuple[int, int, int]] = {
     "player_side_banner": (0, 255, 128),
     "opponent_side_banner": (128, 128, 255),
     "battle_text": (255, 255, 0),
+    "standby_screen": (255, 180, 0),
 }
 
 HELP_LINES = [
