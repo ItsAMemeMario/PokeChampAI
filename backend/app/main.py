@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import session_router, team_router
+from app.api.routes import session_router, suggestions_router, team_router
 from app.services.cv_runner import shutdown_cv
 
 load_dotenv()
@@ -42,6 +42,7 @@ app.add_middleware(
 
 app.include_router(team_router)
 app.include_router(session_router)
+app.include_router(suggestions_router)
 
 
 @app.get("/api/health")

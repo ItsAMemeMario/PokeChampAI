@@ -39,7 +39,13 @@ from app.schema.suggestions import (
     TurnAction,
     TurnSuggestion,
 )
-from app.schema.team import PlayerPokemon, PlayerTeam, parse_team, player_pokemon_from_dict
+from app.schema.team import (
+    OpponentTeamPreview,
+    PlayerPokemon,
+    PlayerTeam,
+    parse_team,
+    player_pokemon_from_dict,
+)
 
 __all__ = [
     "AbilityTriggeredEvent",
@@ -57,6 +63,7 @@ __all__ = [
     "MegaEvolutionEvent",
     "Move",
     "MoveUsedEvent",
+    "OpponentTeamPreview",
     "PlayerPokemon",
     "PlayerTeam",
     "Pokemon",

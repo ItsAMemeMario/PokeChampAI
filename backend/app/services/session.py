@@ -25,9 +25,11 @@ class SessionStore:
         self.adb_connected: bool = False
         self.game_state: GameState | None = None
         self.battle_logs: list[BattleLogEvent] = []
+        self.opponent_team_species: list[str] | None = None
         self.team_preview_suggestion: TeamPreviewSuggestion | None = None
         self.turn_suggestion: TurnSuggestion | None = None
         self.turn_number: int = 0
+        self._team_preview_processed: bool = False
 
     @property
     def team_loaded(self) -> bool:
@@ -44,8 +46,10 @@ class SessionStore:
         self.turn_number = 0
         self.game_state = None
         self.battle_logs.clear()
+        self.opponent_team_species = None
         self.team_preview_suggestion = None
         self.turn_suggestion = None
+        self._team_preview_processed = False
 
     def stop_monitoring(self) -> None:
         self.cv_running = False

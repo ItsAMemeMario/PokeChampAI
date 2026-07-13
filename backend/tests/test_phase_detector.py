@@ -77,6 +77,7 @@ def test_phase_detector_stateful_flow(region_config) -> None:
     transition = detector.detect_transition(_load_asset("team_preview.png"))
     assert transition.previous == BattlePhase.IDLE
     assert transition.current == BattlePhase.TEAM_PREVIEW
+    assert transition.entered_team_preview is True
 
     transition = detector.detect_transition(_load_asset("battle_text.png"))
     assert transition.previous == BattlePhase.TEAM_PREVIEW

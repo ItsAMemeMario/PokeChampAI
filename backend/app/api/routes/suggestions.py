@@ -1,0 +1,27 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+
+from app.api.deps import get_session_store
+from app.schema.suggestions import TeamPreviewSuggestion
+from app.services.session import SessionStore
+
+router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
+
+
+class TeamPreviewSuggestionResponse(BaseModel):
+    opponent_species: list[str] | None
+    suggestion: TeamPreviewSuggestion | None
+
+
+@router.get("/team-preview", response_model=TeamPreviewSuggestionResponse)
+async def get_team_preview_suggestion(
+    store: SessionStore = Depends(get_session_store),
+) -> TeamPreviewSuggestionResponse:
+    if not store.team_loaded:
+        raise HTTPException(status_code=400, detail="No player team saved")
+    return TeamPreviewSuggestionResponse(
+        opponent_species=store.opponent_team_species,
+        suggestion=store.team_preview_suggestion,
+    )

@@ -28,6 +28,19 @@ class PlayerTeam(BaseModel):
         return value
 
 
+class OpponentTeamPreview(BaseModel):
+    """Six opponent species identified from team-preview sprite crops."""
+
+    species: list[str] = Field(description="Exactly 6 opponent species, top to bottom")
+
+    @field_validator("species")
+    @classmethod
+    def exactly_six_species(cls, value: list[str]) -> list[str]:
+        if len(value) != 6:
+            raise ValueError(f"Expected exactly 6 opponent species, got {len(value)}")
+        return value
+
+
 def player_pokemon_from_dict(data: dict) -> PlayerPokemon:
     """Convert a pokepaste_parser.parse() entry into a PlayerPokemon."""
     return PlayerPokemon(
