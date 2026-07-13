@@ -35,8 +35,10 @@ _BATTLE_UI_REGIONS = (
     "player_slot_2_card",
     "opponent_slot_1_card",
     "opponent_slot_2_card",
-    "player_side_banner",
-    "opponent_side_banner",
+    "player_slot_1_banner",
+    "player_slot_2_banner",
+    "opponent_slot_1_banner",
+    "opponent_slot_2_banner",
     "battle_text",
 )
 
