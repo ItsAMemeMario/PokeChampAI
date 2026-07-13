@@ -106,7 +106,7 @@ def _draw_overlay(
         thickness = 3
         cv2.rectangle(canvas, (x, y), (x + w, y + h), color, thickness)
         if show_labels:
-            label = name if name == selected else name.split("_")[-1]
+            label = name
             cv2.putText(
                 canvas,
                 label,
