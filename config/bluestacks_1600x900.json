@@ -16,23 +16,29 @@
       174,
       178
     ],
-    "opponent_side_banner": [
-      1112,
-      315,
-      473,
-      231
+    "opponent_slot_1_banner": [
+      1230,
+      325,
+      250,
+      80
+    ],
+    "opponent_slot_2_banner": [
+      1230,
+      445,
+      250,
+      80
     ],
     "opponent_slot_1_card": [
-      890,
-      16,
-      348,
-      134
+      1328,
+      46,
+      210,
+      94
     ],
     "opponent_slot_2_card": [
-      1235,
-      21,
-      337,
-      117
+      996,
+      46,
+      210,
+      94
     ],
     "opponent_team_preview": [
       1345,
@@ -40,23 +46,29 @@
       199,
       630
     ],
-    "player_side_banner": [
-      11,
-      321,
-      438,
-      229
+    "player_slot_1_banner": [
+      120,
+      325,
+      250,
+      80
+    ],
+    "player_slot_2_banner": [
+      120,
+      445,
+      250,
+      80
     ],
     "player_slot_1_card": [
-      26,
-      758,
-      346,
-      122
+      126,
+      780,
+      210,
+      94
     ],
     "player_slot_2_card": [
-      358,
-      756,
-      348,
-      123
+      458,
+      780,
+      210,
+      94
     ],
     "team_preview_prompt": [
       536,
