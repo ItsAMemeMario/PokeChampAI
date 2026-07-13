@@ -13,7 +13,6 @@ class BattlePhase(str, Enum):
     TEAM_PREVIEW = "team_preview"
     BATTLE_ANIMATION = "battle_animation"
     ACTION_SELECTION = "action_selection"
-    ENDED = "ended"
 
 
 class SessionStore:
