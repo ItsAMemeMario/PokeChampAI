@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from app.cv.adb_capture import capture_screenshot, is_adb_connected
+from app.cv.event_ocr import EventOcrEngine
 from app.cv.phase_detector import PhaseDetector
 from app.cv.regions import load_regions
 from app.cv.team_preview_reader import read_opponent_team_preview
@@ -17,12 +18,15 @@ logger = logging.getLogger(__name__)
 _cv_task: asyncio.Task[None] | None = None
 _ADB_PROBE_INTERVAL_SEC = 5.0
 _TEAM_PREVIEW_POLL_SEC = 1.0
+_BATTLE_ANIMATION_POLL_SEC = 1.0 / 3.0
 _DEFAULT_POLL_SEC = 0.5
 
 
 def _poll_interval(phase: BattlePhase) -> float:
     if phase == BattlePhase.TEAM_PREVIEW:
         return _TEAM_PREVIEW_POLL_SEC
+    if phase == BattlePhase.BATTLE_ANIMATION:
+        return _BATTLE_ANIMATION_POLL_SEC
     return _DEFAULT_POLL_SEC
 
 
@@ -56,9 +60,24 @@ async def _process_team_preview_entry(store: SessionStore, frame) -> None:
         store._team_preview_processed = False
 
 
+def _process_battle_animation_events(
+    store: SessionStore,
+    frame,
+    event_ocr: EventOcrEngine,
+    config,
+) -> None:
+    """OCR changed per-slot banners and battle text, appending parsed events."""
+    event_ocr.player_team = store.player_team
+    for event in event_ocr.process_frame(frame, config):
+        store.append_battle_log(event)
+        logger.info("Battle log event: %s — %r", event.type, event.raw_text)
+
+
 async def _cv_loop(store: SessionStore) -> None:
     logger.info("CV loop started")
     detector = PhaseDetector()
+    event_ocr = EventOcrEngine(player_team=store.player_team)
+    region_config = load_regions()
     try:
         while store.cv_running:
             store.adb_connected = await asyncio.to_thread(is_adb_connected)
@@ -80,6 +99,17 @@ async def _cv_loop(store: SessionStore) -> None:
 
             if transition.entered_team_preview:
                 await _process_team_preview_entry(store, frame)
+
+            if transition.current == BattlePhase.BATTLE_ANIMATION:
+                await asyncio.to_thread(
+                    _process_battle_animation_events,
+                    store,
+                    frame,
+                    event_ocr,
+                    region_config,
+                )
+            else:
+                event_ocr.reset()
 
             await asyncio.sleep(_poll_interval(transition.current))
     except asyncio.CancelledError:

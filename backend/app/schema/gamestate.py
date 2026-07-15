@@ -16,7 +16,7 @@ class ActivePokemon(BaseModel):
     hp_percentage: int = Field(ge=0, le=100)
     status_condition: Literal["none", "brn", "par", "slp", "psn", "tox", "frz"] = "none"
     stat_stages: StatStages
-    volatile_statuses: List[str] = Field(default_factory=list) # e.g., ["taunted", "encored", "confused"]
+    volatile_statuses: List[str] = Field(default_factory=list) # e.g., ["taunted", "encore", "confused"]
     is_protected_last_turn: bool = False
     
     # For the opponent, these start as None and populate as the vision model detects them

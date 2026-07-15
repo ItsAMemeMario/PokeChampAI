@@ -69,7 +69,7 @@ class StatusAppliedEvent(BattleLogEventBase):
 class VolatileAppliedEvent(BattleLogEventBase):
     type: Literal["volatile_applied"] = "volatile_applied"
     pokemon: Pokemon
-    volatile: str
+    volatile: Literal["taunted", "encore", "confused"]
 
 
 class FaintEvent(BattleLogEventBase):
@@ -77,7 +77,7 @@ class FaintEvent(BattleLogEventBase):
     pokemon: Pokemon
 
 
-Weather = Literal["sunny", "rain", "hail", "sandstorm", "none"]
+Weather = Literal["sunny", "rain", "sandstorm", "snow", "none"]
 class WeatherChangeEvent(BattleLogEventBase):
     type: Literal["weather_change"] = "weather_change"
     weather: Weather
@@ -97,7 +97,15 @@ FieldEvent = Union[WeatherChangeEvent, TerrainChangeEvent, TrickRoomChangeEvent]
 class SideConditionEvent(BattleLogEventBase):
     type: Literal["side_condition"] = "side_condition"
     side: Side
-    condition: Literal["tailwind", "reflect", "light_screen", "spikes", "toxic_spikes", "stealth_rocks"]
+    condition: Literal[
+        "tailwind",
+        "reflect",
+        "light_screen",
+        "aurora_veil",
+        "spikes",
+        "toxic_spikes",
+        "stealth_rocks",
+    ]
 
 
 BattleLogEvent = Annotated[

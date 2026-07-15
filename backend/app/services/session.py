@@ -56,5 +56,9 @@ class SessionStore:
         self.adb_connected = False
         self.phase = BattlePhase.IDLE
 
+    def append_battle_log(self, event: BattleLogEvent) -> None:
+        """Append a parsed CV event to the session battle log."""
+        self.battle_logs.append(event)
+
 
 session_store = SessionStore()
