@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "pokemon-mcp-server": {
+      "command": "npx",
+      "args": [
+        "pokeapi-mcp-server@1.4.0"
+      ]
+    }
+  }
+}
