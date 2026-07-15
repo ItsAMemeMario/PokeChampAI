@@ -55,7 +55,8 @@ _MEGA_EVOLUTION_RE = re.compile(
     re.IGNORECASE,
 )
 _MOVE_USED_RE = re.compile(
-    _OPPOSING + r"(?P<species>.+?)\s+used\s+(?P<move>.+?)(?:!|\.)",
+    # Take the remainder of the line as the move; trailing "!" is often OCR'd as "l".
+    _OPPOSING + r"(?P<species>.+?)\s+use[d]?\s+(?P<move>.+?)\s*$",
     re.IGNORECASE,
 )
 _FAINT_RE = re.compile(
@@ -65,17 +66,20 @@ _FAINT_RE = re.compile(
 _SWITCH_RE = re.compile(
     r"(?:"
     # Dual lead switch-ins (must precede single switch-in patterns)
+    # "Gol" is rewritten to "Go!" in normalize_ocr_text; require "Go!" so "Gotcha" is not a hit.
     r"Go!\s*(?P<player_dual_1>.+?)\s+and\s+(?P<player_dual_2>.+?)"
     r"|(?P<trainer_dual>.+?)\s+sent\s+out\s+(?P<opponent_dual_1>.+?)\s+and\s+(?P<opponent_dual_2>.+?)"
-    # Switch-out
-    r"|(?P<player_out>.+?),\s*come\s+back"
+    # Switch-out (comma often OCR'd as ";")
+    r"|(?P<player_out>.+?)[,;]\s*come\s+back"
     r"|(?P<trainer_out>.+?)\s+withdrew\s+(?P<opponent_out>.+?)"
     r"|" + _OPPOSING + r"(?P<self_out>.+?)\s+went\s+back\s+to\s+(?:.+?)"
     # Single switch-in
     r"|Go!\s*(?P<player_in>.+?)"
     r"|(?P<trainer_in>.+?)\s+sent\s+out\s+(?P<opponent_in>.+?)"
     r"|" + _OPPOSING + r"(?P<dragged>.+?)\s+got\s+dragged\s+out"
-    r")\s*!?\s*$",
+    # Do not treat bare "l" as a terminator — it steals the final letter of Grimmsnarl et al.
+    # normalize_ocr_text converts trailing OCR "l" into "!".
+    r")\s*[!.]?\s*$",
     re.IGNORECASE,
 )
 _STAT_TAIL_RE = re.compile(
@@ -89,7 +93,7 @@ _STAT_TAIL_NO_APOSTROPHE_RE = re.compile(
     r"(?:(?:attack|defense|defence|sp\.?\s*atk|sp\.?\s*def|speed|accuracy|evasion|atk|def|spa|spd|spe)"
     r"(?:\s*,\s*|\s+and\s+)?)+"
     r"\s*(?:(?:sharply|harshly|severely|drastically)\s+)?"
-    r"(?:fell|rose|fall|tell+|ros\w*)"
+    r"(?:fell|rose|fall|\{?ell+|tell+|ros\w*)"
     r"(?:\s+(?:sharply|harshly|severely|drastically))?"
     r".*)",
     re.IGNORECASE | re.DOTALL,
@@ -100,7 +104,8 @@ _STAT_NAME_RE = re.compile(
 )
 _STAT_DIRECTION_RE = re.compile(
     r"(?:(?:sharply|harshly|severely|drastically)\s+)?"
-    r"(?:fell|rose|fall|tell+|ros\w*)"
+    # "fell" is often OCR'd as "tell", "{ell", or similar.
+    r"(?:fell|rose|fall|\{?ell+|tell+|ros\w*)"
     r"(?:\s+(?:sharply|harshly|severely|drastically))?",
     re.IGNORECASE,
 )
@@ -143,8 +148,20 @@ _SIDE_CONDITION_RE = re.compile(
 def normalize_ocr_text(text: str) -> str:
     """Normalize OCR quirks before pattern matching."""
     cleaned = text.replace("\u2019", "'")
-    # EasyOCR often mangles "'s" as "'$", "' $", or "$".
+    # EasyOCR often mangles "'s" as "'$", "' $", "' s", "' 5", or bare "$".
+    cleaned = re.sub(r"['\u2019]\s*[\$5sS]\s+", "'s ", cleaned)
     cleaned = re.sub(r"['\u2019]\s*\$", "'s", cleaned)
+    cleaned = re.sub(r"['\u2019]\s+s\b", "'s", cleaned)
+    cleaned = re.sub(r"(\w)\s+\$\s+", r"\1's ", cleaned)
+    # "Go!" is often OCR'd as "Gol".
+    cleaned = re.sub(r"\bGol\b", "Go!", cleaned, flags=re.IGNORECASE)
+    # "opposing" / "the opposing" frequently OCR-glued or misspelled.
+    cleaned = re.sub(r"(?i)\bthe\s*[oq0w]?pposing\b", "The opposing", cleaned)
+    cleaned = re.sub(r"(?i)\b[oq0w]pposing\b", "opposing", cleaned)
+    cleaned = re.sub(r"(?i)\bsent\s*out\b", "sent out", cleaned)
+    cleaned = re.sub(r"(?i)(\w)sent out\b", r"\1 sent out", cleaned)
+    # Trailing "!" OCR'd as l/i/I/1 (e.g. "Swaggerl", "Charizardl").
+    cleaned = re.sub(r"([A-Za-z])[lIi1]\s*$", r"\1!", cleaned)
     cleaned = cleaned.strip()
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned
@@ -156,7 +173,7 @@ def _side_from_text(text: str) -> Side:
 
 
 def _pokemon(species: str, side: Side, *, slot: Slot = 1) -> Pokemon:
-    species = species.strip()
+    species = species.strip().rstrip("!.,").strip()
     if species.lower().startswith("the opposing "):
         species = species[len("the opposing ") :].strip()
     if species.lower().startswith("opposing "):
@@ -202,7 +219,12 @@ def parse_side_banner(
 
 def _stat_delta(direction: str) -> int:
     lowered = direction.lower()
-    if "fell" in lowered or "fall" in lowered or "tell" in lowered:
+    if (
+        "fell" in lowered
+        or "fall" in lowered
+        or "tell" in lowered
+        or "ell" in lowered
+    ):
         if "severely" in lowered:
             return -3
         if "harshly" in lowered or "sharply" in lowered:
@@ -443,42 +465,42 @@ def _parse_switch(text: str) -> list[SwitchInEvent | SwitchOutEvent]:
                 pokemon=_pokemon(match.group("opponent_dual_2"), "opponent", slot=2),
             ),
         ]
-    if "come back" in lowered:
+    if match.group("player_out") is not None or "come back" in lowered:
         return [
             SwitchOutEvent(
                 raw_text=text,
                 pokemon=_pokemon(match.group("player_out"), "player"),
             )
         ]
-    if "withdrew" in lowered:
+    if match.group("opponent_out") is not None or "withdrew" in lowered:
         return [
             SwitchOutEvent(
                 raw_text=text,
                 pokemon=_pokemon(match.group("opponent_out"), "opponent"),
             )
         ]
-    if "went back to" in lowered:
+    if match.group("self_out") is not None or "went back to" in lowered:
         return [
             SwitchOutEvent(
                 raw_text=text,
                 pokemon=_pokemon(match.group("self_out"), _side_from_text(text)),
             )
         ]
-    if lowered.lstrip().startswith("go!"):
+    if match.group("player_in") is not None:
         return [
             SwitchInEvent(
                 raw_text=text,
                 pokemon=_pokemon(match.group("player_in"), "player"),
             )
         ]
-    if "sent out" in lowered:
+    if match.group("opponent_in") is not None or "sent out" in lowered:
         return [
             SwitchInEvent(
                 raw_text=text,
                 pokemon=_pokemon(match.group("opponent_in"), "opponent"),
             )
         ]
-    if "got dragged out" in lowered:
+    if match.group("dragged") is not None or "got dragged out" in lowered:
         return [
             SwitchInEvent(
                 raw_text=text,
@@ -502,10 +524,14 @@ def _parse_move_used(text: str) -> MoveUsedEvent | None:
     match = _MOVE_USED_RE.search(text)
     if not match:
         return None
+    # Trailing bang / OCR-as-l is already normalized to "!" before this runs.
+    move = match.group("move").strip().rstrip("!.,").strip()
+    if not move:
+        return None
     return MoveUsedEvent(
         raw_text=text,
         actor=_pokemon(match.group("species"), _side_from_text(text)),
-        move=match.group("move").strip(),
+        move=move,
         targets=[],
     )
 

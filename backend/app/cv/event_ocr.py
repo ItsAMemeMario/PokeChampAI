@@ -68,7 +68,8 @@ class EventOcrEngine:
                 continue
 
             self._previous_frames[region_name] = _downscale_gray(crop)
-            text = _ocr_text(crop)
+            mode = "battle_text" if region_name == "battle_text" else "banner"
+            text = _ocr_text(crop, mode=mode)
             if not text:
                 continue
 
@@ -135,18 +136,22 @@ def _region_changed(crop_rgb: np.ndarray, previous_gray: np.ndarray | None) -> b
     return float(diff.mean()) >= _FRAME_DIFF_MEAN_MIN
 
 
-def _preprocess_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
+def _preprocess_for_ocr(crop_rgb: np.ndarray, *, mode: str = "banner") -> np.ndarray:
     gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
     upscaled = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    if mode == "battle_text":
+        # White battle-message text on a dark translucent bar — Otsu often fragments it.
+        _, thresh = cv2.threshold(upscaled, 180, 255, cv2.THRESH_BINARY)
+    else:
+        _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB)
 
 
-def _ocr_text(crop_rgb: np.ndarray) -> str:
+def _ocr_text(crop_rgb: np.ndarray, *, mode: str = "banner") -> str:
     reader = getattr(_ocr_text, "_reader", None)
     if reader is None:
         reader = easyocr.Reader(["en"], gpu=False, verbose=False)
         _ocr_text._reader = reader  # type: ignore[attr-defined]
-    prepared = _preprocess_for_ocr(crop_rgb)
+    prepared = _preprocess_for_ocr(crop_rgb, mode=mode)
     lines = reader.readtext(prepared, detail=0, paragraph=True)
     return " ".join(lines).strip()

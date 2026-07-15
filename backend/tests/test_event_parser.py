@@ -13,6 +13,14 @@ from app.cv.event_parser import (
 def test_normalize_ocr_text_fixes_apostrophe_noise() -> None:
     assert normalize_ocr_text("Sinistcha'$ Sitrus Berry") == "Sinistcha's Sitrus Berry"
     assert normalize_ocr_text("Sinistcha' $ Sitrus Berry") == "Sinistcha's Sitrus Berry"
+    assert normalize_ocr_text("Whimsicott' s Focus Sash") == "Whimsicott's Focus Sash"
+    assert normalize_ocr_text("Gol Charizardl") == "Go! Charizard!"
+    assert normalize_ocr_text("The qpposing Staraptor faintedl") == (
+        "The opposing Staraptor fainted!"
+    )
+    assert normalize_ocr_text("Whimsicott' s Focus Sash") == "Whimsicott's Focus Sash"
+    assert normalize_ocr_text("Whimsicott $ Focus Sash") == "Whimsicott's Focus Sash"
+    assert normalize_ocr_text("Gol Charizardl") == "Go! Charizard!"
 
 
 def test_parse_side_banner_ability() -> None:

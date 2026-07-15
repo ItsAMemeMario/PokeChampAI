@@ -122,7 +122,7 @@ def test_region_has_content_on_active_slot_banner(region_config) -> None:
 
 @patch("app.cv.event_ocr._ocr_text")
 def test_event_ocr_engine_emits_once_per_region(mock_ocr, region_config) -> None:
-    mock_ocr.side_effect = lambda crop: "Staraptor's Intimidate"
+    mock_ocr.side_effect = lambda crop, mode="banner": "Staraptor's Intimidate"
     engine = EventOcrEngine()
     image = _load_asset("player_slot_1_banner.png")
 
@@ -137,7 +137,7 @@ def test_event_ocr_engine_emits_once_per_region(mock_ocr, region_config) -> None
 
 @patch("app.cv.event_ocr._ocr_text")
 def test_event_ocr_engine_re_emits_after_region_clears(mock_ocr, region_config) -> None:
-    mock_ocr.side_effect = lambda crop: "Staraptor's Intimidate"
+    mock_ocr.side_effect = lambda crop, mode="banner": "Staraptor's Intimidate"
     engine = EventOcrEngine()
     ability_image = _load_asset("player_slot_1_banner.png")
     empty_image = np.zeros_like(ability_image)
