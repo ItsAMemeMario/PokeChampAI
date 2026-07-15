@@ -11,6 +11,7 @@ from app.schema.team import PlayerTeam
 class BattlePhase(str, Enum):
     IDLE = "idle"
     TEAM_PREVIEW = "team_preview"
+    TEAM_SELECTED = "team_selected"
     BATTLE_ANIMATION = "battle_animation"
     ACTION_SELECTION = "action_selection"
 
@@ -26,6 +27,7 @@ class SessionStore:
         self.game_state: GameState | None = None
         self.battle_logs: list[BattleLogEvent] = []
         self.opponent_team_species: list[str] | None = None
+        self.player_selected_species: list[str] | None = None
         self.team_preview_suggestion: TeamPreviewSuggestion | None = None
         self.turn_suggestion: TurnSuggestion | None = None
         self.turn_number: int = 0
@@ -47,6 +49,7 @@ class SessionStore:
         self.game_state = None
         self.battle_logs.clear()
         self.opponent_team_species = None
+        self.player_selected_species = None
         self.team_preview_suggestion = None
         self.turn_suggestion = None
         self._team_preview_processed = False

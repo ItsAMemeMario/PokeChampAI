@@ -44,6 +44,7 @@ _BATTLE_UI_REGIONS = (
 
 _BATTLE_END_TEXTS = ("forfeit", "forteit", "you defeated", "you lost to", "has ended")
 _STANDBY_COMMUNICATING_MARKERS = ("communicat",)
+_TEAM_SELECTION_STANDBY_MARKERS = ("preparing",)
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,13 @@ class PhaseTransition:
         return (
             self.current == BattlePhase.TEAM_PREVIEW
             and self.previous != BattlePhase.TEAM_PREVIEW
+        )
+
+    @property
+    def entered_team_selected(self) -> bool:
+        return (
+            self.current == BattlePhase.TEAM_SELECTED
+            and self.previous != BattlePhase.TEAM_SELECTED
         )
 
 
@@ -124,6 +132,12 @@ def _ocr_prompt_indicates_standby(crop_rgb: np.ndarray) -> bool:
     text = _ocr_text(crop_rgb).lower()
     return any(marker in text for marker in _STANDBY_COMMUNICATING_MARKERS)
 
+
+def _ocr_prompt_indicates_team_selection_standby(crop_rgb: np.ndarray) -> bool:
+    text = _ocr_text(crop_rgb).lower()
+    return any(marker in text for marker in _TEAM_SELECTION_STANDBY_MARKERS)
+
+
 def is_team_preview(image: np.ndarray, config: RegionConfig) -> bool:
     """Return True when the team preview screen is visible."""
     prompt_crop = crop_region(image, config.get("team_preview_prompt"))
@@ -144,6 +158,12 @@ def is_standby_screen_visible(image: np.ndarray, config: RegionConfig) -> bool:
     """Return True when the center standby screen shows 'Communicating...'."""
     crop = crop_region(image, config.get("standby_screen"))
     return _ocr_prompt_indicates_standby(crop)
+
+
+def is_team_selection_standby_visible(image: np.ndarray, config: RegionConfig) -> bool:
+    """Return True when center text shows 'Preparing for Battle' after both sides lock in."""
+    crop = crop_region(image, config.get("team_selection_standby_text"))
+    return _ocr_prompt_indicates_team_selection_standby(crop)
 
 
 def is_fight_button_visible(image: np.ndarray, config: RegionConfig) -> bool:
@@ -183,12 +203,15 @@ def detect_phase(
     """
     Classify the current frame using priority-ordered checks.
 
-    1. team_preview — center prompt text or opponent preview column
-    2. battle_animation — standby screen ("Communicating...")
-    3. action_selection — FIGHT button visible (entry signal; PhaseDetector latches sub-menus)
-    4. battle_animation — in-match without FIGHT or standby
-    5. idle — fallback
+    1. team_selected — "Preparing for Battle" after brings are locked
+    2. team_preview — center prompt text or opponent preview column
+    3. battle_animation — standby screen ("Communicating...")
+    4. action_selection — FIGHT button visible (entry signal; PhaseDetector latches sub-menus)
+    5. battle_animation — in-match without FIGHT or standby
+    6. idle — fallback
     """
+    if is_team_selection_standby_visible(image, config):
+        return BattlePhase.TEAM_SELECTED
     if is_team_preview(image, config):
         return BattlePhase.TEAM_PREVIEW
     if is_standby_screen_visible(image, config):
@@ -197,6 +220,8 @@ def detect_phase(
         return BattlePhase.ACTION_SELECTION
     if current_phase == BattlePhase.ACTION_SELECTION:
         return BattlePhase.ACTION_SELECTION
+    if current_phase == BattlePhase.TEAM_SELECTED:
+        return BattlePhase.TEAM_SELECTED
     if in_match or saw_team_preview or has_battle_ui(image, config):
         return BattlePhase.BATTLE_ANIMATION
     return BattlePhase.IDLE
@@ -242,10 +267,19 @@ class PhaseDetector:
                 # Detect new match
                 if is_team_preview(image, display_config):
                     current = BattlePhase.TEAM_PREVIEW
+                elif is_team_selection_standby_visible(image, display_config):
+                    # Missed early preview frames; both sides already standing by.
+                    current = BattlePhase.TEAM_SELECTED
             case BattlePhase.TEAM_PREVIEW:
-                # Game starts when team is selected and prompt disappears
-                # Start logging turn 0 events (abilities, items, etc.)
-                if not is_team_preview(image, display_config):
+                # Both sides locked in → "Preparing for Battle"
+                if is_team_selection_standby_visible(image, display_config):
+                    current = BattlePhase.TEAM_SELECTED
+                # Fallback if preview UI disappears without the standby text (skipped frames)
+                elif not is_team_preview(image, display_config):
+                    current = BattlePhase.BATTLE_ANIMATION
+            case BattlePhase.TEAM_SELECTED:
+                # Battle begins when "Preparing for Battle" leaves the screen
+                if not is_team_selection_standby_visible(image, display_config):
                     current = BattlePhase.BATTLE_ANIMATION
             case BattlePhase.BATTLE_ANIMATION:
                 # Turn starts when FIGHT button is visible

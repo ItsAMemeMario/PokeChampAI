@@ -11,6 +11,7 @@ from app.cv.hp_reader import HPReader
 from app.cv.phase_detector import PhaseDetector
 from app.cv.regions import load_regions
 from app.cv.team_preview_reader import read_opponent_team_preview
+from app.cv.team_selection_reader import read_player_selected_species
 from app.services.gemini import GeminiService
 from app.services.session import BattlePhase, SessionStore
 
@@ -19,6 +20,7 @@ logger = logging.getLogger(__name__)
 _cv_task: asyncio.Task[None] | None = None
 _ADB_PROBE_INTERVAL_SEC = 5.0
 _TEAM_PREVIEW_POLL_SEC = 1.0
+_TEAM_SELECTED_POLL_SEC = 1.0
 _ACTION_SELECTION_POLL_SEC = 1.0
 _BATTLE_ANIMATION_POLL_SEC = 1.0 / 3.0  # 3 FPS — HP reader + event OCR
 _DEFAULT_POLL_SEC = 0.5
@@ -27,6 +29,8 @@ _DEFAULT_POLL_SEC = 0.5
 def _poll_interval(phase: BattlePhase) -> float:
     if phase == BattlePhase.TEAM_PREVIEW:
         return _TEAM_PREVIEW_POLL_SEC
+    if phase == BattlePhase.TEAM_SELECTED:
+        return _TEAM_SELECTED_POLL_SEC
     if phase == BattlePhase.BATTLE_ANIMATION:
         return _BATTLE_ANIMATION_POLL_SEC
     if phase == BattlePhase.ACTION_SELECTION:
@@ -62,6 +66,20 @@ async def _process_team_preview_entry(store: SessionStore, frame) -> None:
     except Exception:
         logger.exception("Team preview vision failed")
         store._team_preview_processed = False
+
+
+def _process_team_selected_frame(store: SessionStore, frame, config) -> None:
+    """Detect which player panels are green-selected and map them via pokepaste order."""
+    if store.player_team is None:
+        return
+    try:
+        selected = read_player_selected_species(frame, config, store.player_team)
+    except Exception:
+        logger.exception("Player team selection read failed")
+        return
+    if selected != store.player_selected_species:
+        store.player_selected_species = selected
+        logger.info("Player selected bring: %s", ", ".join(selected))
 
 
 def _process_battle_animation_events(
@@ -141,6 +159,14 @@ async def _cv_loop(store: SessionStore) -> None:
 
             if transition.entered_team_preview:
                 await _process_team_preview_entry(store, frame)
+
+            if transition.current == BattlePhase.TEAM_SELECTED:
+                await asyncio.to_thread(
+                    _process_team_selected_frame,
+                    store,
+                    frame,
+                    region_config,
+                )
 
             if transition.entered_action_selection:
                 await asyncio.to_thread(

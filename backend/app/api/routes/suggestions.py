@@ -12,6 +12,7 @@ router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
 
 class TeamPreviewSuggestionResponse(BaseModel):
     opponent_species: list[str] | None
+    player_selected_species: list[str] | None
     suggestion: TeamPreviewSuggestion | None
 
 
@@ -23,5 +24,6 @@ async def get_team_preview_suggestion(
         raise HTTPException(status_code=400, detail="No player team saved")
     return TeamPreviewSuggestionResponse(
         opponent_species=store.opponent_team_species,
+        player_selected_species=store.player_selected_species,
         suggestion=store.team_preview_suggestion,
     )

@@ -6,7 +6,12 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from app.cv.phase_detector import PhaseDetector, detect_phase, has_battle_ended
+from app.cv.phase_detector import (
+    PhaseDetector,
+    detect_phase,
+    has_battle_ended,
+    is_team_selection_standby_visible,
+)
 from app.cv.regions import config_for_image, default_assets_dir, load_regions
 from app.services.session import BattlePhase
 
@@ -18,6 +23,7 @@ def _load_asset(name: str) -> np.ndarray:
 
 def _advance_to_battle_animation(detector: PhaseDetector) -> None:
     detector.detect(_load_asset("team_preview.png"))
+    detector.detect(_load_asset("team_selection.png"))
     detector.detect(_load_asset("battle_text.png"))
 
 
@@ -35,6 +41,7 @@ def region_config():
     ("asset", "expected"),
     [
         ("team_preview.png", BattlePhase.TEAM_PREVIEW),
+        ("team_selection.png", BattlePhase.TEAM_SELECTED),
         ("action_selection.png", BattlePhase.ACTION_SELECTION),
         ("battle_text.png", BattlePhase.BATTLE_ANIMATION),
         ("player_slot_1_banner.png", BattlePhase.BATTLE_ANIMATION),
@@ -49,7 +56,7 @@ def test_detect_phase_on_reference_screenshots(asset: str, expected: BattlePhase
     """Stateless detect_phase helper (used for signal checks, not strict transitions)."""
     image = _load_asset(asset)
     display_config = config_for_image(region_config, image)
-    in_match = expected != BattlePhase.TEAM_PREVIEW
+    in_match = expected not in (BattlePhase.TEAM_PREVIEW, BattlePhase.TEAM_SELECTED)
     saw_team_preview = expected == BattlePhase.BATTLE_ANIMATION
     phase = detect_phase(
         image,
@@ -58,6 +65,16 @@ def test_detect_phase_on_reference_screenshots(asset: str, expected: BattlePhase
         saw_team_preview=saw_team_preview,
     )
     assert phase == expected
+
+
+def test_is_team_selection_standby_on_reference(region_config) -> None:
+    image = _load_asset("team_selection.png")
+    display_config = config_for_image(region_config, image)
+    assert is_team_selection_standby_visible(image, display_config) is True
+
+    preview = _load_asset("team_preview.png")
+    preview_config = config_for_image(region_config, preview)
+    assert is_team_selection_standby_visible(preview, preview_config) is False
 
 
 def test_phase_detector_strict_idle_to_team_preview_only(region_config) -> None:
@@ -79,8 +96,13 @@ def test_phase_detector_stateful_flow(region_config) -> None:
     assert transition.current == BattlePhase.TEAM_PREVIEW
     assert transition.entered_team_preview is True
 
-    transition = detector.detect_transition(_load_asset("battle_text.png"))
+    transition = detector.detect_transition(_load_asset("team_selection.png"))
     assert transition.previous == BattlePhase.TEAM_PREVIEW
+    assert transition.current == BattlePhase.TEAM_SELECTED
+    assert transition.entered_team_selected is True
+
+    transition = detector.detect_transition(_load_asset("battle_text.png"))
+    assert transition.previous == BattlePhase.TEAM_SELECTED
     assert transition.current == BattlePhase.BATTLE_ANIMATION
 
     transition = detector.detect_transition(_load_asset("action_selection.png"))
@@ -96,6 +118,14 @@ def test_phase_detector_stateful_flow(region_config) -> None:
     assert transition.previous == BattlePhase.BATTLE_ANIMATION
     assert transition.current == BattlePhase.BATTLE_ANIMATION
     assert transition.entered_action_selection is False
+
+
+def test_phase_detector_idle_can_enter_team_selected_directly(region_config) -> None:
+    detector = PhaseDetector(region_config)
+    transition = detector.detect_transition(_load_asset("team_selection.png"))
+    assert transition.previous == BattlePhase.IDLE
+    assert transition.current == BattlePhase.TEAM_SELECTED
+    assert transition.entered_team_selected is True
 
 
 def test_phase_detector_latches_action_selection_until_standby(region_config) -> None:

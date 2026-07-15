@@ -15,6 +15,7 @@ export type PlayerTeam = {
 export type BattlePhase =
   | "idle"
   | "team_preview"
+  | "team_selected"
   | "battle_animation"
   | "action_selection"
   | "ended";
