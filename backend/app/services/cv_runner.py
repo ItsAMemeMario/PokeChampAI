@@ -7,6 +7,7 @@ import logging
 
 from app.cv.adb_capture import capture_screenshot, is_adb_connected
 from app.cv.event_ocr import EventOcrEngine
+from app.cv.hp_reader import HPReader
 from app.cv.phase_detector import PhaseDetector
 from app.cv.regions import load_regions
 from app.cv.team_preview_reader import read_opponent_team_preview
@@ -18,7 +19,8 @@ logger = logging.getLogger(__name__)
 _cv_task: asyncio.Task[None] | None = None
 _ADB_PROBE_INTERVAL_SEC = 5.0
 _TEAM_PREVIEW_POLL_SEC = 1.0
-_BATTLE_ANIMATION_POLL_SEC = 1.0 / 3.0
+_ACTION_SELECTION_POLL_SEC = 1.0
+_BATTLE_ANIMATION_POLL_SEC = 1.0 / 3.0  # 3 FPS — HP reader + event OCR
 _DEFAULT_POLL_SEC = 0.5
 
 
@@ -27,6 +29,8 @@ def _poll_interval(phase: BattlePhase) -> float:
         return _TEAM_PREVIEW_POLL_SEC
     if phase == BattlePhase.BATTLE_ANIMATION:
         return _BATTLE_ANIMATION_POLL_SEC
+    if phase == BattlePhase.ACTION_SELECTION:
+        return _ACTION_SELECTION_POLL_SEC
     return _DEFAULT_POLL_SEC
 
 
@@ -72,10 +76,49 @@ def _process_battle_animation_events(
         logger.info("Battle log event: %s — %r", event.type, event.raw_text)
 
 
+def _process_hp_animation_frame(
+    store: SessionStore,
+    frame,
+    hp_reader: HPReader,
+    config,
+) -> None:
+    """Poll slot cards at animation FPS; append stable HPChangeEvents."""
+    for event in hp_reader.process_animation_frame(frame, config, store.game_state):
+        store.append_battle_log(event)
+        logger.info(
+            "HP change: %s slot %s %+d%% — %r",
+            event.pokemon.side,
+            event.pokemon.slot,
+            event.hp_pct_change,
+            event.raw_text,
+        )
+
+
+def _process_hp_action_selection_snapshot(
+    store: SessionStore,
+    frame,
+    hp_reader: HPReader,
+    config,
+) -> None:
+    """Authoritative 4-slot HP snapshot on action_selection entry."""
+    for event in hp_reader.read_action_selection_snapshot(
+        frame, config, store.game_state
+    ):
+        store.append_battle_log(event)
+        logger.info(
+            "HP snapshot reconcile: %s slot %s %+d%% — %r",
+            event.pokemon.side,
+            event.pokemon.slot,
+            event.hp_pct_change,
+            event.raw_text,
+        )
+
+
 async def _cv_loop(store: SessionStore) -> None:
     logger.info("CV loop started")
     detector = PhaseDetector()
     event_ocr = EventOcrEngine()
+    hp_reader = HPReader()
     region_config = load_regions()
     try:
         while store.cv_running:
@@ -99,6 +142,15 @@ async def _cv_loop(store: SessionStore) -> None:
             if transition.entered_team_preview:
                 await _process_team_preview_entry(store, frame)
 
+            if transition.entered_action_selection:
+                await asyncio.to_thread(
+                    _process_hp_action_selection_snapshot,
+                    store,
+                    frame,
+                    hp_reader,
+                    region_config,
+                )
+
             if transition.current == BattlePhase.BATTLE_ANIMATION:
                 await asyncio.to_thread(
                     _process_battle_animation_events,
@@ -107,8 +159,20 @@ async def _cv_loop(store: SessionStore) -> None:
                     event_ocr,
                     region_config,
                 )
+                await asyncio.to_thread(
+                    _process_hp_animation_frame,
+                    store,
+                    frame,
+                    hp_reader,
+                    region_config,
+                )
             else:
                 event_ocr.reset()
+                if transition.current not in (
+                    BattlePhase.ACTION_SELECTION,
+                    BattlePhase.BATTLE_ANIMATION,
+                ):
+                    hp_reader.reset()
 
             await asyncio.sleep(_poll_interval(transition.current))
     except asyncio.CancelledError:
