@@ -13,7 +13,6 @@ from app.cv.event_parser import parse_battle_text, parse_side_banner
 from app.cv.regions import RegionConfig, config_for_image, crop_region
 from app.schema.battle_log import BattleLogEvent
 from app.schema.common import Side, Slot
-from app.schema.team import PlayerTeam
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +39,6 @@ _DIFF_DOWNSCALE = 4
 class EventOcrEngine:
     """Stateful OCR over per-slot banners and battle text with frame diffing."""
 
-    player_team: PlayerTeam | None = None
     _previous_frames: dict[str, np.ndarray | None] = field(default_factory=dict)
     _last_emitted_text: dict[str, str] = field(default_factory=dict)
 
@@ -98,12 +96,7 @@ class EventOcrEngine:
             return parse_battle_text(text)
 
         assert side is not None and slot is not None
-        event = parse_side_banner(
-            text,
-            side,
-            slot=slot,
-            player_team=self.player_team,
-        )
+        event = parse_side_banner(text, side, slot=slot)
         return [event] if event is not None else []
 
 

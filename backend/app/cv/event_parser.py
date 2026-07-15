@@ -22,166 +22,8 @@ from app.schema.battle_log import (
     VolatileAppliedEvent,
     WeatherChangeEvent,
 )
+from app.data.regulation_mb import is_regulation_mb_item
 from app.schema.common import Pokemon, Side, Slot
-from app.schema.team import PlayerTeam
-
-# Regulation M-B legal held items in Pokemon Champions (148 items).
-# Source: https://metavgc.com/guides/pokemon-champions-regulation-m-b-legal-pokemon-items-moves
-REGULATION_MB_ITEMS: frozenset[str] = frozenset(
-    {
-        # Hold items
-        "Big Root",
-        "Black Belt",
-        "Black Glasses",
-        "Bright Powder",
-        "Charcoal",
-        "Choice Scarf",
-        "Damp Rock",
-        "Dragon Fang",
-        "Expert Belt",
-        "Fairy Feather",
-        "Focus Band",
-        "Focus Sash",
-        "Hard Stone",
-        "Heat Rock",
-        "Icy Rock",
-        "Iron Ball",
-        "King's Rock",
-        "Leftovers",
-        "Life Orb",
-        "Light Ball",
-        "Light Clay",
-        "Magnet",
-        "Mental Herb",
-        "Metal Coat",
-        "Metronome",
-        "Miracle Seed",
-        "Muscle Band",
-        "Mystic Water",
-        "Never-Melt Ice",
-        "Poison Barb",
-        "Quick Claw",
-        "Scope Lens",
-        "Sharp Beak",
-        "Shed Shell",
-        "Shell Bell",
-        "Silk Scarf",
-        "Silver Powder",
-        "Smooth Rock",
-        "Soft Sand",
-        "Spell Tag",
-        "Twisted Spoon",
-        "White Herb",
-        "Wide Lens",
-        "Wise Glasses",
-        "Zoom Lens",
-        # Mega Stones
-        "Abomasite",
-        "Absolite",
-        "Aerodactylite",
-        "Aggronite",
-        "Alakazite",
-        "Altarianite",
-        "Ampharosite",
-        "Audinite",
-        "Banettite",
-        "Barbaracleite",
-        "Beedrillite",
-        "Blastoisinite",
-        "Blazikenite",
-        "Cameruptite",
-        "Chandelurite",
-        "Charizardite X",
-        "Charizardite Y",
-        "Chesnaughtite",
-        "Chimechite",
-        "Clefablite",
-        "Crabominite",
-        "Delphoxite",
-        "Dragalgeite",
-        "Dragoninite",
-        "Drampanite",
-        "Eelektrossite",
-        "Emboarite",
-        "Excadrite",
-        "Falinksite",
-        "Feraligite",
-        "Floettite",
-        "Froslassite",
-        "Galladite",
-        "Garchompite",
-        "Gardevoirite",
-        "Gengarite",
-        "Glalitite",
-        "Glimmoranite",
-        "Golurkite",
-        "Greninjite",
-        "Gyaradosite",
-        "Hawluchanite",
-        "Heracronite",
-        "Houndoominite",
-        "Kangaskhanite",
-        "Lopunnite",
-        "Lucarionite",
-        "Malamarite",
-        "Manectite",
-        "Mawileite",
-        "Medichamite",
-        "Meganiumite",
-        "Meowsticite",
-        "Metagrossite",
-        "Pidgeotite",
-        "Pinsirite",
-        "Pyroarite",
-        "Raichunite X",
-        "Raichunite Y",
-        "Sablenite",
-        "Sceptileite",
-        "Scizorite",
-        "Scolipedeite",
-        "Scovillainite",
-        "Scraftyite",
-        "Sharpedonite",
-        "Skarmorite",
-        "Slowbronite",
-        "Staraptorite",
-        "Starminite",
-        "Steelixite",
-        "Swampertite",
-        "Tyranitarite",
-        "Venusaurite",
-        "Victreebelite",
-        # Berries
-        "Aspear Berry",
-        "Babiri Berry",
-        "Charti Berry",
-        "Cheri Berry",
-        "Chesto Berry",
-        "Chilan Berry",
-        "Chople Berry",
-        "Coba Berry",
-        "Colbur Berry",
-        "Haban Berry",
-        "Kasib Berry",
-        "Kebia Berry",
-        "Leppa Berry",
-        "Lum Berry",
-        "Occa Berry",
-        "Oran Berry",
-        "Passho Berry",
-        "Payapa Berry",
-        "Pecha Berry",
-        "Persim Berry",
-        "Rawst Berry",
-        "Rindo Berry",
-        "Roseli Berry",
-        "Shuca Berry",
-        "Sitrus Berry",
-        "Tanga Berry",
-        "Wacan Berry",
-        "Yache Berry",
-    }
-)
 
 _STAT_ALIASES: dict[str, str] = {
     "attack": "atk",
@@ -317,17 +159,9 @@ def _pokemon(species: str, side: Side, *, slot: Slot = 1) -> Pokemon:
     return Pokemon(species=species, side=side, slot=slot)
 
 
-def known_player_items(player_team: PlayerTeam | None) -> set[str]:
-    if player_team is None:
-        return set()
-    return {mon.item for mon in player_team.pokemon if mon.item}
-
-
-def is_known_item(name: str, player_team: PlayerTeam | None = None) -> bool:
-    normalized = name.strip()
-    if normalized in REGULATION_MB_ITEMS:
-        return True
-    return normalized in known_player_items(player_team)
+def is_known_item(name: str) -> bool:
+    """Return True if ``name`` is a Regulation M-B legal held item."""
+    return is_regulation_mb_item(name)
 
 
 def parse_side_banner(
@@ -335,13 +169,11 @@ def parse_side_banner(
     side: Side,
     *,
     slot: Slot = 1,
-    player_team: PlayerTeam | None = None,
     effect_text: str = "",
 ) -> BattleLogEvent | None:
     """Parse a per-slot banner OCR string into an ability or item event.
 
-    Ability vs item is decided by name lookup against Regulation M-B legal items
-    and the player's known held items.
+    Ability vs item is decided by name lookup against Regulation M-B legal items.
     """
     normalized = normalize_ocr_text(text)
     match = _SIDE_BANNER_RE.match(normalized)
@@ -352,7 +184,7 @@ def parse_side_banner(
     name = match.group("name").strip()
     pokemon = _pokemon(species, side, slot=slot)
 
-    if is_known_item(name, player_team):
+    if is_known_item(name):
         return ItemUsedEvent(raw_text=text, pokemon=pokemon, item=name)
 
     return AbilityTriggeredEvent(

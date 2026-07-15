@@ -67,7 +67,6 @@ def _process_battle_animation_events(
     config,
 ) -> None:
     """OCR changed per-slot banners and battle text, appending parsed events."""
-    event_ocr.player_team = store.player_team
     for event in event_ocr.process_frame(frame, config):
         store.append_battle_log(event)
         logger.info("Battle log event: %s — %r", event.type, event.raw_text)
@@ -76,7 +75,7 @@ def _process_battle_animation_events(
 async def _cv_loop(store: SessionStore) -> None:
     logger.info("CV loop started")
     detector = PhaseDetector()
-    event_ocr = EventOcrEngine(player_team=store.player_team)
+    event_ocr = EventOcrEngine()
     region_config = load_regions()
     try:
         while store.cv_running:

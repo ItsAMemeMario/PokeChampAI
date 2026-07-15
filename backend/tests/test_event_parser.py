@@ -8,62 +8,6 @@ from app.cv.event_parser import (
     parse_battle_text,
     parse_side_banner,
 )
-from app.schema.team import PlayerPokemon, PlayerTeam
-
-
-def _sample_team() -> PlayerTeam:
-    return PlayerTeam(
-        pokemon=[
-            PlayerPokemon(
-                species="Sinistcha",
-                item="Sitrus Berry",
-                ability="Hospitality",
-                evs={"hp": 252},
-                nature="Bold",
-                moves=["Matcha Gotcha"],
-            ),
-            PlayerPokemon(
-                species="Staraptor",
-                item="Choice Band",
-                ability="Intimidate",
-                evs={"atk": 252},
-                nature="Jolly",
-                moves=["Brave Bird"],
-            ),
-            PlayerPokemon(
-                species="Garchomp",
-                item="Clear Amulet",
-                ability="Rough Skin",
-                evs={"atk": 252},
-                nature="Jolly",
-                moves=["Earthquake"],
-            ),
-            PlayerPokemon(
-                species="Incineroar",
-                item="Safety Goggles",
-                ability="Intimidate",
-                evs={"hp": 252},
-                nature="Careful",
-                moves=["Fake Out"],
-            ),
-            PlayerPokemon(
-                species="Rillaboom",
-                item="Assault Vest",
-                ability="Grassy Surge",
-                evs={"atk": 252},
-                nature="Adamant",
-                moves=["Grassy Glide"],
-            ),
-            PlayerPokemon(
-                species="Urshifu-Rapid-Strike",
-                item="Focus Sash",
-                ability="Unseen Fist",
-                evs={"atk": 252},
-                nature="Jolly",
-                moves=["Surging Strikes"],
-            ),
-        ]
-    )
 
 
 def test_normalize_ocr_text_fixes_apostrophe_noise() -> None:
@@ -76,7 +20,6 @@ def test_parse_side_banner_ability() -> None:
         "Staraptor's Intimidate =",
         "player",
         slot=1,
-        player_team=_sample_team(),
     )
     assert event is not None
     assert event.type == "ability_triggered"
@@ -90,7 +33,6 @@ def test_parse_side_banner_item_from_known_item_name() -> None:
         "Sinistcha's Sitrus Berry",
         "player",
         slot=2,
-        player_team=_sample_team(),
     )
     assert event is not None
     assert event.type == "item_used"
@@ -117,13 +59,13 @@ def test_parse_side_banner_opponent_item_via_common_list() -> None:
     assert event.item == "Sitrus Berry"
 
 
-def test_is_known_item_checks_player_team_and_regulation_mb_list() -> None:
-    team = _sample_team()
-    assert is_known_item("Sitrus Berry", team) is True
-    assert is_known_item("Leftovers", team) is True
-    assert is_known_item("Intimidate", team) is False
-    assert is_known_item("Assault Vest", team) is True  # on sample team, not Regulation M-B
-    assert is_known_item("Rocky Helmet", team) is False
+def test_is_known_item_checks_regulation_mb_list() -> None:
+    assert is_known_item("Sitrus Berry") is True
+    assert is_known_item("Leftovers") is True
+    assert is_known_item("Intimidate") is False
+    assert is_known_item("Assault Vest") is False
+    assert is_known_item("Rocky Helmet") is False
+    assert is_known_item("Staraptorite") is True
 
 
 def test_parse_battle_text_mega_evolution_with_ocr_errors() -> None:

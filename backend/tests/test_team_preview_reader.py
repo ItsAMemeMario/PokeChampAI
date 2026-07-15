@@ -91,7 +91,7 @@ async def test_cv_team_preview_pipeline_stores_suggestion() -> None:
         pokemon=[
             PlayerPokemon(
                 species=f"Mon{i}",
-                item="Item",
+                item="Sitrus Berry",
                 ability="Ability",
                 evs={"hp": 0},
                 nature="Timid",

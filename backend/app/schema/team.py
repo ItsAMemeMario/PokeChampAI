@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from app.data.regulation_mb import REGULATION_MB_ITEMS
 from app.util.pokepaste_parser import parse
 
 
@@ -14,6 +15,14 @@ class PlayerPokemon(BaseModel):
     evs: dict[str, int]
     nature: str
     moves: list[str]
+
+    @field_validator("item")
+    @classmethod
+    def item_must_be_regulation_mb_legal(cls, value: str) -> str:
+        item = value.strip()
+        if item not in REGULATION_MB_ITEMS:
+            raise ValueError(f"Item '{item}' is not legal in Regulation M-B")
+        return item
 
 
 class PlayerTeam(BaseModel):
@@ -58,7 +67,16 @@ def parse_team(pokepaste: str, *, regulation: Literal["M-B"] = "M-B") -> PlayerT
     parsed = parse(pokepaste)
     if len(parsed) != 6:
         raise ValueError(f"Expected exactly 6 Pokemon in pokepaste, got {len(parsed)}")
-    return PlayerTeam(
-        pokemon=[player_pokemon_from_dict(entry) for entry in parsed],
-        regulation=regulation,
-    )
+    try:
+        return PlayerTeam(
+            pokemon=[player_pokemon_from_dict(entry) for entry in parsed],
+            regulation=regulation,
+        )
+    except ValidationError as exc:
+        messages: list[str] = []
+        for error in exc.errors():
+            msg = error.get("msg", "Invalid team data")
+            if msg.startswith("Value error, "):
+                msg = msg[len("Value error, ") :]
+            messages.append(msg)
+        raise ValueError("; ".join(messages) if messages else str(exc)) from exc

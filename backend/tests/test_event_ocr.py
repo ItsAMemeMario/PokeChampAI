@@ -28,7 +28,7 @@ def _sample_team() -> PlayerTeam:
             ),
             PlayerPokemon(
                 species="Staraptor",
-                item="Choice Band",
+                item="Staraptorite",
                 ability="Intimidate",
                 evs={"atk": 252},
                 nature="Jolly",
@@ -36,7 +36,7 @@ def _sample_team() -> PlayerTeam:
             ),
             PlayerPokemon(
                 species="Garchomp",
-                item="Clear Amulet",
+                item="Lum Berry",
                 ability="Rough Skin",
                 evs={"atk": 252},
                 nature="Jolly",
@@ -44,7 +44,7 @@ def _sample_team() -> PlayerTeam:
             ),
             PlayerPokemon(
                 species="Incineroar",
-                item="Safety Goggles",
+                item="Wide Lens",
                 ability="Intimidate",
                 evs={"hp": 252},
                 nature="Careful",
@@ -52,7 +52,7 @@ def _sample_team() -> PlayerTeam:
             ),
             PlayerPokemon(
                 species="Rillaboom",
-                item="Assault Vest",
+                item="Leftovers",
                 ability="Grassy Surge",
                 evs={"atk": 252},
                 nature="Adamant",
@@ -123,7 +123,7 @@ def test_region_has_content_on_active_slot_banner(region_config) -> None:
 @patch("app.cv.event_ocr._ocr_text")
 def test_event_ocr_engine_emits_once_per_region(mock_ocr, region_config) -> None:
     mock_ocr.side_effect = lambda crop: "Staraptor's Intimidate"
-    engine = EventOcrEngine(player_team=_sample_team())
+    engine = EventOcrEngine()
     image = _load_asset("player_slot_1_banner.png")
 
     first = engine.process_frame(image, region_config)
@@ -138,7 +138,7 @@ def test_event_ocr_engine_emits_once_per_region(mock_ocr, region_config) -> None
 @patch("app.cv.event_ocr._ocr_text")
 def test_event_ocr_engine_re_emits_after_region_clears(mock_ocr, region_config) -> None:
     mock_ocr.side_effect = lambda crop: "Staraptor's Intimidate"
-    engine = EventOcrEngine(player_team=_sample_team())
+    engine = EventOcrEngine()
     ability_image = _load_asset("player_slot_1_banner.png")
     empty_image = np.zeros_like(ability_image)
 
@@ -156,7 +156,7 @@ def test_process_battle_animation_events_appends_to_session(mock_ocr, region_con
 
     store = SessionStore()
     store.set_team(_sample_team())
-    engine = EventOcrEngine(player_team=store.player_team)
+    engine = EventOcrEngine()
     image = _load_asset("opponent_slot_2_banner.png")
 
     _process_battle_animation_events(store, image, engine, region_config)
@@ -169,7 +169,7 @@ def test_process_battle_animation_events_appends_to_session(mock_ocr, region_con
 
 def test_event_ocr_on_reference_screenshots(region_config) -> None:
     """End-to-end OCR on calibration assets (requires EasyOCR)."""
-    engine = EventOcrEngine(player_team=_sample_team())
+    engine = EventOcrEngine()
     expectations = {
         "player_slot_1_banner.png": ("ability_triggered", "player", 1),
         "player_slot_2_banner.png": ("item_used", "player", 2),
