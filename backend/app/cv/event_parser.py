@@ -64,9 +64,14 @@ _FAINT_RE = re.compile(
 )
 _SWITCH_RE = re.compile(
     r"(?:"
-    r"(?P<player_out>.+?),\s*come\s+back"
+    # Dual lead switch-ins (must precede single switch-in patterns)
+    r"Go!\s*(?P<player_dual_1>.+?)\s+and\s+(?P<player_dual_2>.+?)"
+    r"|(?P<trainer_dual>.+?)\s+sent\s+out\s+(?P<opponent_dual_1>.+?)\s+and\s+(?P<opponent_dual_2>.+?)"
+    # Switch-out
+    r"|(?P<player_out>.+?),\s*come\s+back"
     r"|(?P<trainer_out>.+?)\s+withdrew\s+(?P<opponent_out>.+?)"
     r"|" + _OPPOSING + r"(?P<self_out>.+?)\s+went\s+back\s+to\s+(?:.+?)"
+    # Single switch-in
     r"|Go!\s*(?P<player_in>.+?)"
     r"|(?P<trainer_in>.+?)\s+sent\s+out\s+(?P<opponent_in>.+?)"
     r"|" + _OPPOSING + r"(?P<dragged>.+?)\s+got\s+dragged\s+out"
@@ -411,42 +416,76 @@ def _parse_volatile(text: str) -> VolatileAppliedEvent | None:
     )
 
 
-def _parse_switch(text: str) -> SwitchInEvent | SwitchOutEvent | None:
+def _parse_switch(text: str) -> list[SwitchInEvent | SwitchOutEvent]:
     match = _SWITCH_RE.search(text)
     if not match:
-        return None
+        return []
     lowered = text.lower()
+    if match.group("player_dual_1") is not None:
+        return [
+            SwitchInEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("player_dual_1"), "player", slot=1),
+            ),
+            SwitchInEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("player_dual_2"), "player", slot=2),
+            ),
+        ]
+    if match.group("opponent_dual_1") is not None:
+        return [
+            SwitchInEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("opponent_dual_1"), "opponent", slot=1),
+            ),
+            SwitchInEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("opponent_dual_2"), "opponent", slot=2),
+            ),
+        ]
     if "come back" in lowered:
-        return SwitchOutEvent(
-            raw_text=text,
-            pokemon=_pokemon(match.group("player_out"), "player"),
-        )
+        return [
+            SwitchOutEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("player_out"), "player"),
+            )
+        ]
     if "withdrew" in lowered:
-        return SwitchOutEvent(
-            raw_text=text,
-            pokemon=_pokemon(match.group("opponent_out"), "opponent"),
-        )
+        return [
+            SwitchOutEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("opponent_out"), "opponent"),
+            )
+        ]
     if "went back to" in lowered:
-        return SwitchOutEvent(
-            raw_text=text,
-            pokemon=_pokemon(match.group("self_out"), _side_from_text(text)),
-        )
+        return [
+            SwitchOutEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("self_out"), _side_from_text(text)),
+            )
+        ]
     if lowered.lstrip().startswith("go!"):
-        return SwitchInEvent(
-            raw_text=text,
-            pokemon=_pokemon(match.group("player_in"), "player"),
-        )
+        return [
+            SwitchInEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("player_in"), "player"),
+            )
+        ]
     if "sent out" in lowered:
-        return SwitchInEvent(
-            raw_text=text,
-            pokemon=_pokemon(match.group("opponent_in"), "opponent"),
-        )
+        return [
+            SwitchInEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("opponent_in"), "opponent"),
+            )
+        ]
     if "got dragged out" in lowered:
-        return SwitchInEvent(
-            raw_text=text,
-            pokemon=_pokemon(match.group("dragged"), _side_from_text(text)),
-        )
-    return None
+        return [
+            SwitchInEvent(
+                raw_text=text,
+                pokemon=_pokemon(match.group("dragged"), _side_from_text(text)),
+            )
+        ]
+    return []
 
 
 def _parse_mega_evolution(text: str) -> MegaEvolutionEvent | None:
@@ -489,15 +528,13 @@ def parse_battle_text(text: str) -> list[BattleLogEvent]:
 
     events: list[BattleLogEvent] = []
 
-    stat_events = _parse_stat_changes(normalized)
-    if stat_events:
-        events.extend(stat_events)
+    for multi_parser in (_parse_stat_changes, _parse_switch):
+        events.extend(multi_parser(normalized))
 
     for single_parser in (
         _parse_mega_evolution,
         _parse_move_used,
         _parse_faint,
-        _parse_switch,
         _parse_status,
         _parse_volatile,
         _parse_weather,

@@ -201,6 +201,30 @@ def test_parse_dragged_out_opponent() -> None:
     assert events[0].pokemon.side == "opponent"
 
 
+def test_parse_player_dual_lead_switch_in() -> None:
+    events = parse_battle_text("Go! Incineroar and Rillaboom!")
+    assert len(events) == 2
+    assert all(event.type == "switch_in" for event in events)
+    assert events[0].pokemon.species == "Incineroar"
+    assert events[0].pokemon.side == "player"
+    assert events[0].pokemon.slot == 1
+    assert events[1].pokemon.species == "Rillaboom"
+    assert events[1].pokemon.side == "player"
+    assert events[1].pokemon.slot == 2
+
+
+def test_parse_opponent_dual_lead_switch_in() -> None:
+    events = parse_battle_text("Blue sent out Garchomp and Sylveon!")
+    assert len(events) == 2
+    assert all(event.type == "switch_in" for event in events)
+    assert events[0].pokemon.species == "Garchomp"
+    assert events[0].pokemon.side == "opponent"
+    assert events[0].pokemon.slot == 1
+    assert events[1].pokemon.species == "Sylveon"
+    assert events[1].pokemon.side == "opponent"
+    assert events[1].pokemon.slot == 2
+
+
 def test_parse_volatile_taunt() -> None:
     events = parse_battle_text("Incineroar fell for the taunt!")
     assert len(events) == 1
