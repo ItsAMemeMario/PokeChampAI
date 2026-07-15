@@ -43,6 +43,8 @@ from app.cv.regions import (
 
 REGION_COLORS: dict[str, tuple[int, int, int]] = {
     "team_preview_prompt": (0, 200, 255),
+    "team_selection_standby_text": (0, 200, 255),
+    "player_team_selection": (0, 200, 255),
     "opponent_team_preview": (0, 128, 255),
     "fight_button": (255, 0, 255),
     "player_slot_1_card": (0, 255, 0),
@@ -106,7 +108,7 @@ def _draw_overlay(
     for name in config.names():
         x, y, w, h = config.get(name)
         color = _region_color(name)
-        thickness = 3
+        thickness = 1
         cv2.rectangle(canvas, (x, y), (x + w, y + h), color, thickness)
         if show_labels:
             label = name

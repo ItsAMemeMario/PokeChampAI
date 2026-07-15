@@ -40,6 +40,12 @@
       210,
       94
     ],
+    "player_team_selection": [
+      245,
+      131,
+      250,
+      630
+    ],
     "opponent_team_preview": [
       1345,
       128,
@@ -75,6 +81,12 @@
       166,
       300,
       108
+    ],
+    "team_selection_standby_text": [
+      780,
+      87,
+      200,
+      35
     ],
     "standby_screen": [
       710,
