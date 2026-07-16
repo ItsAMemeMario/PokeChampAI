@@ -91,6 +91,14 @@ def test_parse_player_numeric_hp() -> None:
         raw_text="Staraptor 162 / 162",
     )
 
+    # Trailing italic "l" often OCR'd as "/".
+    trailing_l = parse_slot_card_text("Grimmsnar/ 199/199", "player")
+    assert trailing_l == SlotCardRead(
+        species="Grimmsnarl",
+        hp_pct=100,
+        raw_text="Grimmsnarl 199 / 199",
+    )
+
 
 def test_parse_opponent_percent_hp() -> None:
     reading = parse_slot_card_text("Hatterene 47%", "opponent")

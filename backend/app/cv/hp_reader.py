@@ -27,6 +27,10 @@ _SLOT_CARD_REGIONS: tuple[tuple[str, Side, Slot], ...] = (
 _STABLE_FRAMES_REQUIRED = 2
 _REGION_CONTENT_STD_MIN = 20.0
 _REGION_CONTENT_MEAN_MIN = 15.0
+# Keep near-gray + bright pixels (white name/HP text); drop colored bar/chrome.
+_SLOT_CARD_CHROMA_MAX = 25
+_SLOT_CARD_BRIGHT_MIN = 160
+_SLOT_CARD_OCR_UPSCALE = 2.0
 
 # Player cards: "162 / 162" or "162/162"
 _PLAYER_HP_RE = re.compile(r"(?P<current>\d+)\s*/\s*(?P<max>\d+)")
@@ -283,7 +287,7 @@ def _normalize_slot_ocr_text(text: str, side: Side) -> str:
 
 
 def _ocr_slot_card_text(crop_rgb: np.ndarray) -> str:
-    """OCR a slot-card crop (grayscale upscale; Otsu destroys thin '/' and names)."""
+    """OCR a slot-card crop after near-gray + bright masking."""
     import easyocr
 
     reader = getattr(_ocr_slot_card_text, "_reader", None)
@@ -300,8 +304,23 @@ def _ocr_slot_card_text(crop_rgb: np.ndarray) -> str:
 
 
 def _preprocess_slot_card_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
-    gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
-    upscaled = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    """Mask to near-gray bright text, then 2× upscale for EasyOCR."""
+    r = crop_rgb[:, :, 0].astype(np.int16)
+    g = crop_rgb[:, :, 1].astype(np.int16)
+    b = crop_rgb[:, :, 2].astype(np.int16)
+    chroma = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+    brightness = (r + g + b) // 3
+    keep = (chroma <= _SLOT_CARD_CHROMA_MAX) & (brightness >= _SLOT_CARD_BRIGHT_MIN)
+
+    masked = np.zeros(crop_rgb.shape[:2], dtype=np.uint8)
+    masked[keep] = 255
+    upscaled = cv2.resize(
+        masked,
+        None,
+        fx=_SLOT_CARD_OCR_UPSCALE,
+        fy=_SLOT_CARD_OCR_UPSCALE,
+        interpolation=cv2.INTER_CUBIC,
+    )
     return cv2.cvtColor(upscaled, cv2.COLOR_GRAY2RGB)
 
 
@@ -369,7 +388,11 @@ def _extract_species(text: str, hp_start: int, hp_end: int) -> str:
         while parts and len(parts[0]) <= 1:
             parts.pop(0)
         candidate = " ".join(parts).strip(" .:!-")
-    return candidate
+    # Italic trailing "l" is often OCR'd as "/" (e.g. Grimmsnar/ → Grimmsnarl).
+    # Apply before stripping "/", or the letter is lost.
+    if candidate.endswith("/"):
+        candidate = candidate[:-1] + "l"
+    return candidate.strip(" .:!-")
 
 
 def _species_matches(known: str, observed: str) -> bool:
