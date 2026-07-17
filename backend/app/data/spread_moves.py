@@ -1,7 +1,11 @@
-"""Known doubles spread-move targeting used by the battle log completer.
+"""Regulation M-B doubles spread-move targeting for the battle log completer.
 
-Only unambiguous geometric targets are listed. Do not invent targets for
-single-target moves from move name alone.
+Only unambiguous geometric targets are listed, and only moves legal in
+Pokemon Champions Regulation M-B (MetaVGC allowed-move pool).
+
+Source: https://metavgc.com/guides/pokemon-champions-regulation-m-b-legal-pokemon-items-moves
+
+Do not invent targets for single-target moves from move name alone.
 """
 
 from __future__ import annotations
@@ -11,22 +15,21 @@ from typing import Literal
 # Hits every adjacent Pokemon except the user (both foes + ally).
 ALL_ADJACENT_MOVES: frozenset[str] = frozenset(
     {
-        "Earthquake",
-        "Bulldoze",
-        "Magnitude",
-        "Surf",
-        "Muddy Water",
-        "Discharge",
-        "Lava Plume",
-        "Sludge Wave",
-        "Petal Blizzard",
-        "Parabolic Charge",
+        "Boomburst",
         "Brutal Swing",
-        "Sparkling Aria",
-        "Misty Explosion",
+        "Bulldoze",
+        "Discharge",
+        "Earthquake",
         "Explosion",
+        "Lava Plume",
+        "Misty Explosion",
+        "Muddy Water",
+        "Parabolic Charge",
+        "Petal Blizzard",
         "Self-Destruct",
-        "Selfdestruct",
+        "Sludge Wave",
+        "Sparkling Aria",
+        "Surf",
         "Teeter Dance",
     }
 )
@@ -34,31 +37,24 @@ ALL_ADJACENT_MOVES: frozenset[str] = frozenset(
 # Hits both adjacent opposing Pokemon only.
 ALL_FOES_MOVES: frozenset[str] = frozenset(
     {
-        "Rock Slide",
-        "Icy Wind",
-        "Dazzling Gleam",
-        "Heat Wave",
+        "Air Cutter",
         "Blizzard",
-        "Hyper Voice",
-        "Snarl",
-        "Origin Pulse",
-        "Precipice Blades",
-        "Disarming Voice",
+        "Breaking Swipe",
+        "Burning Jealousy",
+        "Clanging Scales",
+        "Dazzling Gleam",
         "Electroweb",
-        "Glaciate",
         "Eruption",
-        "Water Spout",
-        "Boomburst",
-        "Struggle Bug",
-        "Incinerate",
-        "Frost Breath",
-        "Diamond Storm",
+        "Heat Wave",
+        "Hyper Voice",
+        "Icy Wind",
         "Make It Rain",
-        "Astral Barrage",
-        "Bleakwind Storm",
-        "Wildbolt Storm",
-        "Sandsear Storm",
-        "Springtide Storm",
+        "Matcha Gotcha",
+        "Mortal Spin",
+        "Rock Slide",
+        "Snarl",
+        "Struggle Bug",
+        "Water Spout",
     }
 )
 
