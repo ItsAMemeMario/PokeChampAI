@@ -129,11 +129,11 @@ def test_parse_battle_text_stat_change_compound_opponents() -> None:
 
 
 def test_parse_battle_text_stat_change_with_ocr_noise() -> None:
-    events = parse_battle_text("The opposing Palafin and the opposing Tyrantrun Attack telll")
+    events = parse_battle_text("The opposing Palafin and the opposing Tyrantrum Attack telll")
     assert len(events) == 2
     assert all(event.stages_delta == -1 for event in events)
     assert all(event.stat == "atk" for event in events)
-    assert {event.pokemon.species for event in events} == {"Palafin", "Tyrantrun"}
+    assert {event.pokemon.species for event in events} == {"Palafin", "Tyrantrum"}
 
 
 

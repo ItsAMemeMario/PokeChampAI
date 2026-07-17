@@ -59,9 +59,17 @@ class SessionStore:
         self.adb_connected = False
         self.phase = BattlePhase.IDLE
 
-    def append_battle_log(self, event: BattleLogEvent) -> None:
-        """Append a parsed CV event to the session battle log."""
+    def append_battle_log(self, event: BattleLogEvent) -> list[int]:
+        """Append a parsed CV event and retroactively complete partial fields.
+
+        Returns indices of log events patched by the completer (including any
+        updates to earlier events in the current turn).
+        """
         self.battle_logs.append(event)
+        # Local import avoids a circular dependency at module load time.
+        from app.services.battle_log_completer import complete_battle_logs
+
+        return complete_battle_logs(self)
 
 
 session_store = SessionStore()
