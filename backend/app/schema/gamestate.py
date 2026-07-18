@@ -29,7 +29,7 @@ class ActivePokemon(BaseModel):
 class BenchedPokemon(BaseModel):
     species: str
     hp_percentage: int = Field(ge=0, le=100)
-    status_condition: str = "none"
+    status_condition: Literal["none", "brn", "par", "slp", "psn", "tox", "frz"] = "none"
 
     # For the opponent, these start as None and populate as the vision model detects them
     revealed_ability: Optional[str] = None
@@ -37,9 +37,9 @@ class BenchedPokemon(BaseModel):
     revealed_moves: List[str] = Field(default_factory=list)
 
 class Hazards(BaseModel):
-    spikes: Literal[0, 1]
-    toxic_spikes: Literal[0, 1, 2]
-    stealth_rocks: Literal[0, 1]
+    spikes: Literal[0, 1] = 0
+    toxic_spikes: Literal[0, 1, 2] = 0
+    stealth_rocks: Literal[0, 1] = 0
 
 class SideState(BaseModel):
     # Explicit slots make targeting logic much easier for the LLM
