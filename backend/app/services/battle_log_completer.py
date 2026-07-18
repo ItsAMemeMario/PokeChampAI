@@ -30,27 +30,26 @@ _ABILITY_BOUNDARY_TYPES = frozenset(
 )
 
 
-def complete_battle_logs(store: SessionStore) -> list[int]:
+def complete_battle_logs(store: SessionStore) -> list[tuple[int, int]]:
     """Patch incomplete events in ``store.battle_logs`` using later evidence.
 
-    Returns indices of events that were modified.
+    Returns ``(turn_number, event_index)`` pairs for events that were modified.
     """
-    logs = store.battle_logs
-    if not logs:
-        return []
-
+    patched: list[tuple[int, int]] = []
     game_state = store.game_state
-    patched: list[int] = []
 
-    for index, event in enumerate(logs):
-        changed = False
-        if isinstance(event, MoveUsedEvent):
-            changed = _complete_move_used(logs, index, game_state)
-        elif isinstance(event, AbilityTriggeredEvent):
-            changed = _complete_ability_triggered(logs, index)
+    for turn, logs in enumerate(store.battle_logs):
+        if turn == 0 or not logs:
+            continue
+        for index, event in enumerate(logs):
+            changed = False
+            if isinstance(event, MoveUsedEvent):
+                changed = _complete_move_used(logs, index, game_state)
+            elif isinstance(event, AbilityTriggeredEvent):
+                changed = _complete_ability_triggered(logs, index)
 
-        if changed:
-            patched.append(index)
+            if changed:
+                patched.append((turn, index))
 
     return patched
 

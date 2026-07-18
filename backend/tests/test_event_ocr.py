@@ -10,6 +10,7 @@ from PIL import Image
 
 from app.cv.event_ocr import EventOcrEngine, _region_changed, _region_has_content
 from app.cv.regions import crop_region, default_assets_dir, load_regions
+from app.schema.battle_log import TurnStartEvent
 from app.schema.team import PlayerPokemon, PlayerTeam
 from app.services.cv_runner import _process_battle_animation_events
 from app.services.session import SessionStore
@@ -156,15 +157,17 @@ def test_process_battle_animation_events_appends_to_session(mock_ocr, region_con
 
     store = SessionStore()
     store.set_team(_sample_team())
+    store.turn_number = 1
+    store.append_battle_log(TurnStartEvent(raw_text="Turn 1", turn_number=1))
     engine = EventOcrEngine()
     image = _load_asset("opponent_slot_2_banner.png")
 
     _process_battle_animation_events(store, image, engine, region_config)
 
-    assert len(store.battle_logs) >= 1
-    assert store.battle_logs[0].type == "item_used"
-    assert store.battle_logs[0].pokemon.side == "opponent"
-    assert store.battle_logs[0].pokemon.slot == 2
+    assert len(store.battle_logs[1]) >= 2
+    assert store.battle_logs[1][1].type == "item_used"
+    assert store.battle_logs[1][1].pokemon.side == "opponent"
+    assert store.battle_logs[1][1].pokemon.slot == 2
 
 
 def test_event_ocr_on_reference_screenshots(region_config) -> None:

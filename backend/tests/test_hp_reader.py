@@ -25,10 +25,19 @@ from app.schema.gamestate import (
     StatStages,
 )
 from app.services.cv_runner import (
+    _emit_turn_start_on_battle_animation_entry,
     _process_hp_action_selection_snapshot,
     _process_hp_animation_frame,
 )
+from app.schema.battle_log import TurnStartEvent
 from app.services.session import SessionStore
+
+
+def _open_turn(store: SessionStore, turn: int = 1) -> None:
+    store.turn_number = turn
+    store.append_battle_log(
+        TurnStartEvent(raw_text=f"Turn {turn}", turn_number=turn)
+    )
 
 
 def _active(species: str, hp: int) -> ActivePokemon:
@@ -288,6 +297,7 @@ def test_cv_runner_appends_hp_events(mock_ocr, region_config) -> None:
 
     store = SessionStore()
     store.game_state = _game_state(player_slot_1=_active("Sinistcha", 100))
+    _open_turn(store)
     reader = HPReader()
 
     _process_hp_animation_frame(store, masked, reader, region_config)
@@ -295,9 +305,9 @@ def test_cv_runner_appends_hp_events(mock_ocr, region_config) -> None:
     _process_hp_animation_frame(store, masked, reader, region_config)
     _process_hp_animation_frame(store, masked, reader, region_config)
 
-    assert len(store.battle_logs) == 1
-    assert store.battle_logs[0].type == "hp_change"
-    assert store.battle_logs[0].hp_pct_change == 46 - 100
+    assert len(store.battle_logs[1]) == 2  # turn_start + hp_change
+    assert store.battle_logs[1][1].type == "hp_change"
+    assert store.battle_logs[1][1].hp_pct_change == 46 - 100
 
 
 @patch("app.cv.hp_reader._ocr_slot_card_text")
@@ -316,8 +326,29 @@ def test_cv_runner_snapshot_helper(mock_ocr, region_config) -> None:
 
     store = SessionStore()
     store.game_state = _game_state(player_slot_1=_active("Staraptor", 100))
+    _open_turn(store)
     reader = HPReader()
     _process_hp_action_selection_snapshot(store, masked, reader, region_config)
 
-    assert len(store.battle_logs) == 1
-    assert store.battle_logs[0].hp_pct_change == 50 - 100  # round(81/162*100)=50
+    assert len(store.battle_logs[1]) == 2
+    assert store.battle_logs[1][1].hp_pct_change == 50 - 100  # round(81/162*100)=50
+
+
+def test_emit_turn_start_on_battle_animation_entry() -> None:
+    store = SessionStore()
+    store.game_state = _game_state(player_slot_1=_active("Sinistcha", 100))
+    assert store.turn_number == 0
+
+    _emit_turn_start_on_battle_animation_entry(store)
+    assert store.turn_number == 1
+    assert store.game_state.turn_number == 1
+    assert store.battle_logs[0] == []
+    assert len(store.battle_logs[1]) == 1
+    assert store.battle_logs[1][0].type == "turn_start"
+    assert store.battle_logs[1][0].turn_number == 1
+
+    _emit_turn_start_on_battle_animation_entry(store)
+    assert store.turn_number == 2
+    assert len(store.battle_logs) == 3
+    assert store.battle_logs[2][0].type == "turn_start"
+    assert store.battle_logs[2][0].turn_number == 2

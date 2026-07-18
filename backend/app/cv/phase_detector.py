@@ -77,6 +77,13 @@ class PhaseTransition:
             and self.previous != BattlePhase.TEAM_SELECTED
         )
 
+    @property
+    def entered_battle_animation(self) -> bool:
+        return (
+            self.current == BattlePhase.BATTLE_ANIMATION
+            and self.previous != BattlePhase.BATTLE_ANIMATION
+        )
+
 
 @lru_cache(maxsize=1)
 def _fight_button_template() -> np.ndarray | None:

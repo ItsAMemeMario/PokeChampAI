@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from app.schema.battle_log import BattleLogEvent
+from app.schema.battle_log import BattleLogEvent, TurnStartEvent
 from app.schema.gamestate import GameState
 from app.schema.suggestions import TeamPreviewSuggestion, TurnSuggestion
 from app.schema.team import PlayerTeam
@@ -25,7 +25,9 @@ class SessionStore:
         self.cv_running: bool = False
         self.adb_connected: bool = False
         self.game_state: GameState | None = None
-        self.battle_logs: list[BattleLogEvent] = []
+        # Indexed by turn number (1-based). Index 0 is unused.
+        # Each turn list starts with a TurnStartEvent.
+        self.battle_logs: list[list[BattleLogEvent]] = [[]]
         self.opponent_team_species: list[str] | None = None
         self.player_selected_species: list[str] | None = None
         self.team_preview_suggestion: TeamPreviewSuggestion | None = None
@@ -47,7 +49,7 @@ class SessionStore:
         self.phase = BattlePhase.IDLE
         self.turn_number = 0
         self.game_state = None
-        self.battle_logs.clear()
+        self.battle_logs = [[]]
         self.opponent_team_species = None
         self.player_selected_species = None
         self.team_preview_suggestion = None
@@ -59,13 +61,35 @@ class SessionStore:
         self.adb_connected = False
         self.phase = BattlePhase.IDLE
 
-    def append_battle_log(self, event: BattleLogEvent) -> list[int]:
-        """Append a parsed CV event and retroactively complete partial fields.
+    def append_battle_log(self, event: BattleLogEvent) -> list[tuple[int, int]]:
+        """Append a parsed CV event into the current turn's log.
 
-        Returns indices of log events patched by the completer (including any
-        updates to earlier events in the current turn).
+        ``TurnStartEvent`` opens ``battle_logs[turn_number]`` as a new turn
+        list (starting with that event). All other events append to the
+        active turn. Returns ``(turn, index)`` pairs patched by the completer.
         """
-        self.battle_logs.append(event)
+        if isinstance(event, TurnStartEvent):
+            turn = event.turn_number
+            if turn < 1:
+                raise ValueError(f"TurnStartEvent turn_number must be >= 1, got {turn}")
+            while len(self.battle_logs) <= turn:
+                self.battle_logs.append([])
+            self.battle_logs[turn] = [event]
+        else:
+            turn = self.turn_number
+            if turn < 1:
+                raise ValueError(
+                    "Cannot append battle log event before a TurnStartEvent "
+                    f"(turn_number={self.turn_number})"
+                )
+            while len(self.battle_logs) <= turn:
+                self.battle_logs.append([])
+            if not self.battle_logs[turn]:
+                raise ValueError(
+                    f"Turn {turn} is not open; append a TurnStartEvent first"
+                )
+            self.battle_logs[turn].append(event)
+
         # Local import avoids a circular dependency at module load time.
         from app.services.battle_log_completer import complete_battle_logs
 

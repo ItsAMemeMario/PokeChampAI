@@ -73,8 +73,20 @@ def _move(
     )
 
 
+def _start_turn(store: SessionStore, turn: int = 1) -> None:
+    store.turn_number = turn
+    store.append_battle_log(
+        TurnStartEvent(raw_text=f"Turn {turn}", turn_number=turn)
+    )
+
+
+def _turn_events(store: SessionStore, turn: int = 1) -> list:
+    return store.battle_logs[turn]
+
+
 def test_fills_move_targets_from_following_hp_changes() -> None:
     store = SessionStore()
+    _start_turn(store)
     store.append_battle_log(_move("Garchomp", "Earthquake"))
     store.append_battle_log(
         HPChangeEvent(
@@ -91,7 +103,7 @@ def test_fills_move_targets_from_following_hp_changes() -> None:
         )
     )
 
-    move = store.battle_logs[0]
+    move = _turn_events(store)[1]
     assert move.type == "move_used"
     assert {(t.species, t.side, t.slot) for t in move.targets} == {
         ("Incineroar", "opponent", 1),
@@ -101,6 +113,7 @@ def test_fills_move_targets_from_following_hp_changes() -> None:
 
 def test_fills_move_targets_from_faint() -> None:
     store = SessionStore()
+    _start_turn(store)
     store.append_battle_log(_move("Sinistcha", "Matcha Gotcha"))
     store.append_battle_log(
         FaintEvent(
@@ -109,7 +122,7 @@ def test_fills_move_targets_from_faint() -> None:
         )
     )
 
-    move = store.battle_logs[0]
+    move = _turn_events(store)[1]
     assert move.type == "move_used"
     assert len(move.targets) == 1
     assert move.targets[0].species == "Flutter Mane"
@@ -118,6 +131,7 @@ def test_fills_move_targets_from_faint() -> None:
 
 def test_excludes_actor_self_hp_change_from_targets() -> None:
     store = SessionStore()
+    _start_turn(store)
     store.append_battle_log(_move("Sinistcha", "Matcha Gotcha"))
     store.append_battle_log(
         HPChangeEvent(
@@ -134,7 +148,7 @@ def test_excludes_actor_self_hp_change_from_targets() -> None:
         )
     )
 
-    move = store.battle_logs[0]
+    move = _turn_events(store)[1]
     assert move.type == "move_used"
     assert [t.species for t in move.targets] == ["Incineroar"]
 
@@ -147,9 +161,10 @@ def test_earthquake_spread_defaults_from_game_state() -> None:
         opponent_slot_1=_active("Incineroar"),
         opponent_slot_2=_active("Aerodactyl"),
     )
+    _start_turn(store)
     store.append_battle_log(_move("Garchomp", "Earthquake", slot=1))
 
-    move = store.battle_logs[0]
+    move = _turn_events(store)[1]
     assert move.type == "move_used"
     assert {(t.species, t.side, t.slot) for t in move.targets} == {
         ("Sinistcha", "player", 2),
@@ -166,9 +181,10 @@ def test_rock_slide_targets_foes_only() -> None:
         opponent_slot_1=_active("Incineroar"),
         opponent_slot_2=_active("Aerodactyl"),
     )
+    _start_turn(store)
     store.append_battle_log(_move("Garchomp", "Rock Slide", slot=1))
 
-    move = store.battle_logs[0]
+    move = _turn_events(store)[1]
     assert move.type == "move_used"
     assert {(t.species, t.side) for t in move.targets} == {
         ("Incineroar", "opponent"),
@@ -185,6 +201,7 @@ def test_evidence_preferred_over_spread_defaults() -> None:
         opponent_slot_1=_active("Incineroar"),
         opponent_slot_2=_active("Aerodactyl"),
     )
+    _start_turn(store)
     store.append_battle_log(_move("Garchomp", "Earthquake", slot=1))
     store.append_battle_log(
         HPChangeEvent(
@@ -194,7 +211,7 @@ def test_evidence_preferred_over_spread_defaults() -> None:
         )
     )
 
-    move = store.battle_logs[0]
+    move = _turn_events(store)[1]
     assert move.type == "move_used"
     assert [t.species for t in move.targets] == ["Incineroar"]
 
@@ -207,10 +224,11 @@ def test_resolves_actor_slot_from_game_state() -> None:
         opponent_slot_1=_active("Incineroar"),
         opponent_slot_2=_active("Aerodactyl"),
     )
+    _start_turn(store)
     # OCR defaults slot to 1; Garchomp is actually slot 2.
     store.append_battle_log(_move("Garchomp", "Outrage", slot=1))
 
-    move = store.battle_logs[0]
+    move = _turn_events(store)[1]
     assert move.type == "move_used"
     assert move.actor.slot == 2
     assert move.actor.species == "Garchomp"
@@ -218,6 +236,7 @@ def test_resolves_actor_slot_from_game_state() -> None:
 
 def test_fills_ability_effect_text_from_following_stat_changes() -> None:
     store = SessionStore()
+    _start_turn(store)
     store.append_battle_log(
         AbilityTriggeredEvent(
             raw_text="Staraptor's Intimidate",
@@ -243,7 +262,7 @@ def test_fills_ability_effect_text_from_following_stat_changes() -> None:
         )
     )
 
-    ability = store.battle_logs[0]
+    ability = _turn_events(store)[1]
     assert ability.type == "ability_triggered"
     assert "Incineroar's Attack fell" in ability.effect_text
     assert "Aerodactyl's Attack fell" in ability.effect_text
@@ -251,6 +270,7 @@ def test_fills_ability_effect_text_from_following_stat_changes() -> None:
 
 def test_does_not_cross_next_move_boundary() -> None:
     store = SessionStore()
+    _start_turn(store)
     store.append_battle_log(_move("Garchomp", "Outrage"))
     store.append_battle_log(_move("Incineroar", "Flare Blitz", side="opponent"))
     store.append_battle_log(
@@ -261,15 +281,15 @@ def test_does_not_cross_next_move_boundary() -> None:
         )
     )
 
-    first = store.battle_logs[0]
-    second = store.battle_logs[1]
+    first = _turn_events(store)[1]
+    second = _turn_events(store)[2]
     assert first.type == "move_used"
     assert first.targets == []
     assert second.type == "move_used"
     assert [t.species for t in second.targets] == ["Garchomp"]
 
 
-def test_turn_start_does_not_clear_prior_completion() -> None:
+def test_new_turn_does_not_clear_prior_completion() -> None:
     store = SessionStore()
     store.game_state = _game_state(
         player_slot_1=_active("Garchomp"),
@@ -277,15 +297,19 @@ def test_turn_start_does_not_clear_prior_completion() -> None:
         opponent_slot_1=_active("Incineroar"),
         opponent_slot_2=_active("Aerodactyl"),
     )
+    _start_turn(store, 1)
     store.append_battle_log(_move("Garchomp", "Earthquake"))
-    assert store.battle_logs[0].targets  # type: ignore[union-attr]
+    assert _turn_events(store, 1)[1].targets  # type: ignore[union-attr]
 
-    store.append_battle_log(TurnStartEvent(raw_text="Turn 2", turn_number=2))
-    assert len(store.battle_logs[0].targets) == 3  # type: ignore[union-attr]
+    _start_turn(store, 2)
+    assert len(_turn_events(store, 1)[1].targets) == 3  # type: ignore[union-attr]
+    assert _turn_events(store, 2)[0].type == "turn_start"
+    assert len(_turn_events(store, 2)) == 1
 
 
 def test_complete_battle_logs_idempotent() -> None:
     store = SessionStore()
+    _start_turn(store)
     store.append_battle_log(_move("Sinistcha", "Matcha Gotcha"))
     store.append_battle_log(
         FaintEvent(
@@ -297,7 +321,7 @@ def test_complete_battle_logs_idempotent() -> None:
     second = complete_battle_logs(store)
     assert first == []  # already completed on append
     assert second == []
-    assert len(store.battle_logs[0].targets) == 1  # type: ignore[union-attr]
+    assert len(_turn_events(store)[1].targets) == 1  # type: ignore[union-attr]
 
 
 def test_single_target_move_without_evidence_stays_empty() -> None:
@@ -306,8 +330,25 @@ def test_single_target_move_without_evidence_stays_empty() -> None:
         player_slot_1=_active("Garchomp"),
         opponent_slot_1=_active("Incineroar"),
     )
+    _start_turn(store)
     store.append_battle_log(_move("Garchomp", "Outrage"))
 
-    move = store.battle_logs[0]
+    move = _turn_events(store)[1]
     assert move.type == "move_used"
     assert move.targets == []
+
+
+def test_battle_logs_indexed_by_turn_number() -> None:
+    store = SessionStore()
+    _start_turn(store, 1)
+    store.append_battle_log(_move("Garchomp", "Earthquake"))
+    _start_turn(store, 2)
+    store.append_battle_log(_move("Sinistcha", "Matcha Gotcha"))
+
+    assert store.battle_logs[0] == []
+    assert store.battle_logs[1][0].type == "turn_start"
+    assert store.battle_logs[1][0].turn_number == 1
+    assert store.battle_logs[2][0].type == "turn_start"
+    assert store.battle_logs[2][0].turn_number == 2
+    assert store.battle_logs[1][1].move == "Earthquake"  # type: ignore[union-attr]
+    assert store.battle_logs[2][1].move == "Matcha Gotcha"  # type: ignore[union-attr]

@@ -12,6 +12,7 @@ from app.cv.phase_detector import PhaseDetector
 from app.cv.regions import load_regions
 from app.cv.team_preview_reader import read_opponent_team_preview
 from app.cv.team_selection_reader import read_player_selected_species
+from app.schema.battle_log import TurnStartEvent
 from app.services.gemini import GeminiService
 from app.services.session import BattlePhase, SessionStore
 
@@ -132,6 +133,19 @@ def _process_hp_action_selection_snapshot(
         )
 
 
+def _emit_turn_start_on_battle_animation_entry(store: SessionStore) -> None:
+    """Increment turn counter and append TurnStartEvent on battle_animation entry."""
+    store.turn_number += 1
+    if store.game_state is not None:
+        store.game_state.turn_number = store.turn_number
+    event = TurnStartEvent(
+        raw_text=f"Turn {store.turn_number}",
+        turn_number=store.turn_number,
+    )
+    store.append_battle_log(event)
+    logger.info("Turn start: %d", store.turn_number)
+
+
 async def _cv_loop(store: SessionStore) -> None:
     logger.info("CV loop started")
     detector = PhaseDetector()
@@ -176,6 +190,9 @@ async def _cv_loop(store: SessionStore) -> None:
                     hp_reader,
                     region_config,
                 )
+
+            if transition.entered_battle_animation:
+                _emit_turn_start_on_battle_animation_entry(store)
 
             if transition.current == BattlePhase.BATTLE_ANIMATION:
                 await asyncio.to_thread(

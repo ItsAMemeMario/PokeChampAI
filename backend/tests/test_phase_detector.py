@@ -104,20 +104,24 @@ def test_phase_detector_stateful_flow(region_config) -> None:
     transition = detector.detect_transition(_load_asset("battle_text.png"))
     assert transition.previous == BattlePhase.TEAM_SELECTED
     assert transition.current == BattlePhase.BATTLE_ANIMATION
+    assert transition.entered_battle_animation is True
 
     transition = detector.detect_transition(_load_asset("action_selection.png"))
     assert transition.previous == BattlePhase.BATTLE_ANIMATION
     assert transition.current == BattlePhase.ACTION_SELECTION
     assert transition.entered_action_selection is True
+    assert transition.entered_battle_animation is False
 
     transition = detector.detect_transition(_load_asset("standby.png"))
     assert transition.previous == BattlePhase.ACTION_SELECTION
     assert transition.current == BattlePhase.BATTLE_ANIMATION
+    assert transition.entered_battle_animation is True
 
     transition = detector.detect_transition(_load_asset("battle_text.png"))
     assert transition.previous == BattlePhase.BATTLE_ANIMATION
     assert transition.current == BattlePhase.BATTLE_ANIMATION
     assert transition.entered_action_selection is False
+    assert transition.entered_battle_animation is False
 
 
 def test_phase_detector_idle_can_enter_team_selected_directly(region_config) -> None:
