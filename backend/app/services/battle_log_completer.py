@@ -14,6 +14,7 @@ from app.schema.battle_log import (
     BattleLogEvent,
     FaintEvent,
     HPChangeEvent,
+    MoveFailedEvent,
     MoveUsedEvent,
     StatChangeEvent,
     StatusAppliedEvent,
@@ -24,7 +25,7 @@ from app.schema.gamestate import ActivePokemon, GameState, SideState
 from app.services.session import SessionStore
 
 # Events that close the evidence window for a move / ability.
-_MOVE_BOUNDARY_TYPES = frozenset({"move_used", "turn_start"})
+_MOVE_BOUNDARY_TYPES = frozenset({"move_used", "move_failed", "turn_start"})
 _ABILITY_BOUNDARY_TYPES = frozenset(
     {"move_used", "ability_triggered", "turn_start", "item_used"}
 )
@@ -45,6 +46,8 @@ def complete_battle_logs(store: SessionStore) -> list[tuple[int, int]]:
             changed = False
             if isinstance(event, MoveUsedEvent):
                 changed = _complete_move_used(logs, index, game_state)
+            elif isinstance(event, MoveFailedEvent):
+                changed = _complete_move_failed(logs, index)
             elif isinstance(event, AbilityTriggeredEvent):
                 changed = _complete_ability_triggered(logs, index)
 
@@ -52,6 +55,29 @@ def complete_battle_logs(store: SessionStore) -> list[tuple[int, int]]:
                 patched.append((turn, index))
 
     return patched
+
+
+def _complete_move_failed(
+    logs: list[BattleLogEvent],
+    index: int,
+) -> bool:
+    """Fill actor/move from the most recent preceding MoveUsedEvent."""
+    event = logs[index]
+    assert isinstance(event, MoveFailedEvent)
+
+    prior_move: MoveUsedEvent | None = None
+    for earlier in reversed(logs[:index]):
+        if isinstance(earlier, MoveUsedEvent):
+            prior_move = earlier
+            break
+
+    if prior_move is None:
+        return False
+    
+    logs[index] = event.model_copy(
+        update={"actor": prior_move.actor, "move": prior_move.move}
+    )
+    return True
 
 
 def _complete_move_used(

@@ -26,6 +26,11 @@ class MoveUsedEvent(BattleLogEventBase):
     move: str
     targets: List[Pokemon]
 
+class MoveFailedEvent(BattleLogEventBase):
+    type: Literal["move_failed"] = "move_failed"
+    actor: Pokemon | None = None
+    move: str = ""
+
 
 class AbilityTriggeredEvent(BattleLogEventBase):
     type: Literal["ability_triggered"] = "ability_triggered"
@@ -113,6 +118,7 @@ BattleLogEvent = Annotated[
         TurnStartEvent,
         MegaEvolutionEvent,
         MoveUsedEvent,
+        MoveFailedEvent,
         AbilityTriggeredEvent,
         SwitchInEvent,
         SwitchOutEvent,

@@ -8,6 +8,7 @@ from app.schema.battle_log import (
     AbilityTriggeredEvent,
     FaintEvent,
     HPChangeEvent,
+    MoveFailedEvent,
     MoveUsedEvent,
     StatChangeEvent,
     TurnStartEvent,
@@ -322,6 +323,46 @@ def test_complete_battle_logs_idempotent() -> None:
     assert first == []  # already completed on append
     assert second == []
     assert len(_turn_events(store)[1].targets) == 1  # type: ignore[union-attr]
+
+
+def test_completes_move_failed_from_prior_move_used() -> None:
+    store = SessionStore()
+    _start_turn(store)
+    store.append_battle_log(_move("Staraptor", "Protect"))
+    store.append_battle_log(
+        MoveFailedEvent(
+            raw_text="But it failed!",
+            timestamp=datetime(2026, 1, 1),
+        )
+    )
+
+    failed = _turn_events(store)[2]
+    assert failed.type == "move_failed"
+    assert failed.actor is not None
+    assert failed.actor.species == "Staraptor"
+    assert failed.actor.side == "player"
+    assert failed.actor.slot == 1
+    assert failed.move == "Protect"
+
+
+def test_move_failed_uses_most_recent_move_used() -> None:
+    store = SessionStore()
+    _start_turn(store)
+    store.append_battle_log(_move("Garchomp", "Earthquake"))
+    store.append_battle_log(_move("Staraptor", "Protect", slot=2))
+    store.append_battle_log(
+        MoveFailedEvent(
+            raw_text="But it failed!",
+            timestamp=datetime(2026, 1, 1),
+        )
+    )
+
+    failed = _turn_events(store)[3]
+    assert failed.type == "move_failed"
+    assert failed.actor is not None
+    assert failed.actor.species == "Staraptor"
+    assert failed.actor.slot == 2
+    assert failed.move == "Protect"
 
 
 def test_single_target_move_without_evidence_stays_empty() -> None:

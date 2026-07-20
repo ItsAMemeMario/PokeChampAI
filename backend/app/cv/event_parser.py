@@ -10,6 +10,7 @@ from app.schema.battle_log import (
     BattleLogEvent,
     FaintEvent,
     MegaEvolutionEvent,
+    MoveFailedEvent,
     MoveUsedEvent,
     ItemUsedEvent,
     SideConditionEvent,
@@ -61,6 +62,10 @@ _MOVE_USED_RE = re.compile(
 )
 _FAINT_RE = re.compile(
     _OPPOSING + r"(?P<species>.+?)\s+faint",
+    re.IGNORECASE,
+)
+_MOVE_FAILED_RE = re.compile(
+    r"^But\s+it\s+failed\s*!?\s*$",
     re.IGNORECASE,
 )
 _SWITCH_RE = re.compile(
@@ -546,6 +551,13 @@ def _parse_faint(text: str) -> FaintEvent | None:
     )
 
 
+def _parse_move_failed(text: str) -> MoveFailedEvent | None:
+    if _MOVE_FAILED_RE.match(text) is None:
+        return None
+    # Actor resolved later by most recent move used
+    return MoveFailedEvent(raw_text=text)
+
+
 def parse_battle_text(text: str) -> list[BattleLogEvent]:
     """Parse bottom battle-text OCR into one or more typed events."""
     normalized = normalize_ocr_text(text)
@@ -560,6 +572,7 @@ def parse_battle_text(text: str) -> list[BattleLogEvent]:
     for single_parser in (
         _parse_mega_evolution,
         _parse_move_used,
+        _parse_move_failed,
         _parse_faint,
         _parse_status,
         _parse_volatile,
@@ -582,7 +595,7 @@ def _event_dedupe_key(event: BattleLogEvent) -> tuple:
         key.extend([pokemon.species, pokemon.side, pokemon.slot])
     if event.type == "stat_change":
         key.extend([event.stat, event.stages_delta])
-    if event.type == "move_used":
+    if event.type in {"move_used", "move_failed"}:
         key.append(event.move)
     return tuple(key)
 

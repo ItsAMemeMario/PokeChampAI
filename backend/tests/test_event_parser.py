@@ -145,6 +145,15 @@ def test_parse_battle_text_move_used() -> None:
     assert events[0].move == "Matcha Gotcha"
 
 
+def test_parse_battle_text_move_failed() -> None:
+    events = parse_battle_text("But it failed!")
+    assert len(events) == 1
+    assert events[0].type == "move_failed"
+    # Actor/move are filled later by the battle log completer.
+    assert events[0].actor is None
+    assert events[0].move == ""
+
+
 def test_parse_player_manual_switch_out() -> None:
     events = parse_battle_text("Blastoise, come back!")
     assert len(events) == 1
