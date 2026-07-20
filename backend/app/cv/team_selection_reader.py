@@ -1,10 +1,12 @@
-"""Detect which of the player's six preview panels are selected (bring-4)."""
+"""Detect player bring-4 from team-preview selection-order badges."""
 
 from __future__ import annotations
 
 import logging
+import re
 
 import cv2
+import easyocr
 import numpy as np
 
 from app.cv.regions import RegionConfig, config_for_image, crop_region
@@ -13,10 +15,8 @@ from app.schema.team import PlayerTeam
 logger = logging.getLogger(__name__)
 
 _SLOT_COUNT = 6
-# Bright mint/lime highlight on selected panels (tuned on assets/cv/team_selection.png).
-_SELECTED_GREEN_HSV_LOW = np.array([35, 25, 150], dtype=np.uint8)
-_SELECTED_GREEN_HSV_HIGH = np.array([95, 180, 255], dtype=np.uint8)
-_SELECTED_GREEN_RATIO_MIN = 15.0
+_ORDER_BADGE_WIDTH_RATIO = 0.25
+_ORDER_DIGIT_RE = re.compile(r"[1-6]")
 
 
 def crop_player_team_selection(image: np.ndarray, config: RegionConfig) -> np.ndarray:
@@ -38,20 +38,51 @@ def split_player_selection_slots(image: np.ndarray, config: RegionConfig) -> lis
     return slots
 
 
-def _slot_green_ratio(slot_rgb: np.ndarray) -> float:
-    hsv = cv2.cvtColor(slot_rgb, cv2.COLOR_RGB2HSV)
-    mask = cv2.inRange(hsv, _SELECTED_GREEN_HSV_LOW, _SELECTED_GREEN_HSV_HIGH)
-    return float(mask.mean())
+def _order_badge_crop(slot_rgb: np.ndarray) -> np.ndarray:
+    """Leftmost strip of a panel where the selection-order number badge appears."""
+    width = slot_rgb.shape[1]
+    badge_width = max(1, int(round(width * _ORDER_BADGE_WIDTH_RATIO)))
+    return slot_rgb[:, :badge_width]
 
 
-def detect_selected_slot_mask(image: np.ndarray, config: RegionConfig) -> list[bool]:
+def _preprocess_order_badge_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
+    upscaled = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB)
+
+
+def _ocr_order_badge_text(crop_rgb: np.ndarray) -> str:
+    reader = getattr(_ocr_order_badge_text, "_reader", None)
+    if reader is None:
+        reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+        _ocr_order_badge_text._reader = reader  # type: ignore[attr-defined]
+    prepared = _preprocess_order_badge_for_ocr(crop_rgb)
+    lines = reader.readtext(prepared, detail=0, paragraph=True)
+    return " ".join(lines).strip()
+
+
+def _parse_selection_order(text: str) -> int | None:
+    """Extract a selection order digit (1–6) from OCR text."""
+    match = _ORDER_DIGIT_RE.search(text)
+    if match is None:
+        return None
+    return int(match.group(0))
+
+
+def read_selection_orders(image: np.ndarray, config: RegionConfig) -> list[int | None]:
     """
-    Return a length-6 boolean mask: True when the panel has the green selected highlight.
+    OCR the leftmost 25% of each panel for the selection-order badge.
 
-    Index 0 is the top panel (first Pokémon in the player's pokepaste order).
+    Returns a length-6 list: order digit when present, ``None`` when absent/unreadable.
     """
     slots = split_player_selection_slots(image, config)
-    return [_slot_green_ratio(slot) >= _SELECTED_GREEN_RATIO_MIN for slot in slots]
+    orders: list[int | None] = []
+    for slot in slots:
+        badge = _order_badge_crop(slot)
+        text = _ocr_order_badge_text(badge)
+        orders.append(_parse_selection_order(text))
+    return orders
 
 
 def read_player_selected_species(
@@ -60,23 +91,22 @@ def read_player_selected_species(
     player_team: PlayerTeam,
 ) -> list[str]:
     """
-    Map green-highlighted panels to species using the player's submitted team order.
+    Map panels with selection-order badges to species via the player's pokepaste order.
 
-    Returns selected species in top-to-bottom (pokepaste) order — typically 4.
+    Returns selected species ordered by badge number (1 → N), typically 4.
     """
-    selected = detect_selected_slot_mask(image, config)
     if len(player_team.pokemon) != _SLOT_COUNT:
         raise ValueError(
             f"Player team must have {_SLOT_COUNT} Pokemon, got {len(player_team.pokemon)}"
         )
-    species = [
-        player_team.pokemon[index].species
-        for index, is_selected in enumerate(selected)
-        if is_selected
+
+    orders = read_selection_orders(image, config)
+    ranked = [
+        (order, index, player_team.pokemon[index].species)
+        for index, order in enumerate(orders)
+        if order is not None
     ]
-    logger.info(
-        "Player team selection: %s (mask=%s)",
-        species,
-        selected,
-    )
-    return species
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    species_ordered = [item[2] for item in ranked]
+    logger.info("Player team selection: %s (orders=%s)", species_ordered, orders)
+    return species_ordered

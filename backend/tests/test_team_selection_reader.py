@@ -1,4 +1,4 @@
-"""Tests for player team selection (green-highlight) detection."""
+"""Tests for player team selection via selection-order badge OCR."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from PIL import Image
 
 from app.cv.regions import default_assets_dir, load_regions
 from app.cv.team_selection_reader import (
-    detect_selected_slot_mask,
     read_player_selected_species,
+    read_selection_orders,
     split_player_selection_slots,
 )
 from app.schema.team import PlayerPokemon, PlayerTeam
@@ -60,15 +60,16 @@ def test_split_player_selection_slots(region_config) -> None:
         assert slot.shape[1] > 0
 
 
-def test_detect_selected_slot_mask_on_reference(region_config) -> None:
+def test_read_selection_orders_on_reference(region_config) -> None:
     image = _load_asset("team_selection.png")
-    mask = detect_selected_slot_mask(image, region_config)
-    assert mask == [True, True, False, True, True, False]
+    orders = read_selection_orders(image, region_config)
+    assert orders == [1, 2, None, 4, 3, None]
 
 
-def test_read_player_selected_species_maps_pokepaste_order(
+def test_read_player_selected_species_uses_selection_order(
     region_config, player_team: PlayerTeam
 ) -> None:
     image = _load_asset("team_selection.png")
     selected = read_player_selected_species(image, region_config, player_team)
-    assert selected == ["Staraptor", "Grimmsnarl", "Sneasler", "Garchomp"]
+    # Badge order on reference: Staraptor=1, Grimmsnarl=2, Garchomp=3, Sneasler=4
+    assert selected == ["Staraptor", "Grimmsnarl", "Garchomp", "Sneasler"]
