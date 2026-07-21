@@ -76,12 +76,26 @@ def test_is_known_item_checks_regulation_mb_list() -> None:
     assert is_known_item("Staraptorite") is True
 
 
-def test_parse_battle_text_mega_evolution_with_ocr_errors() -> None:
-    events = parse_battle_text("The opposing Scizor has Mega Evolvea ito Mega Scizorl")
+def test_parse_battle_text_mega_evolution() -> None:
+    events = parse_battle_text(
+        "The opposing Scizor's Scizorite is reacting to the Trainer's Omni Ring!"
+    )
     assert any(event.type == "mega_evolution" for event in events)
     mega = next(event for event in events if event.type == "mega_evolution")
     assert mega.pokemon.species == "Scizor"
     assert mega.pokemon.side == "opponent"
+    assert mega.variant == "regular"
+
+
+def test_parse_battle_text_mega_evolution_xy_form() -> None:
+    events = parse_battle_text(
+        "Charizard's Charizardite Y is reacting to Trainer's Omni Ring!"
+    )
+    assert len(events) == 1
+    assert events[0].type == "mega_evolution"
+    assert events[0].pokemon.species == "Charizard"
+    assert events[0].pokemon.side == "player"
+    assert events[0].variant == "Y"
 
 
 def test_parse_battle_text_stat_change_one_player_multi_stat() -> None:

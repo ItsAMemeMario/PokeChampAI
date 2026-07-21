@@ -19,6 +19,7 @@ class TurnStartEvent(BattleLogEventBase):
 class MegaEvolutionEvent(BattleLogEventBase):
     type: Literal["mega_evolution"] = "mega_evolution"
     pokemon: Pokemon
+    variant: Literal["regular", "X", "Y", "Z"] = "regular"
 
 class MoveUsedEvent(BattleLogEventBase):
     type: Literal["move_used"] = "move_used"

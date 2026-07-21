@@ -270,11 +270,16 @@ def _species_matches(left: str, right: str) -> bool:
     b = right.strip().lower()
     if a == b:
         return True
-    # Mega / form prefixes: "Mega Scizor" ↔ "Scizor"
-    for x, y in ((a, b), (b, a)):
-        if x.startswith("mega ") and x[len("mega ") :] == y:
-            return True
-    return False
+
+    def base_species(name: str) -> str:
+        # Mega / form: "Mega Charizard Y" ↔ "Charizard Y" ↔ "Charizard"
+        if name.startswith("mega "):
+            name = name[len("mega ") :]
+        if name.endswith((" x", " y", " z")):
+            name = name[:-2].rstrip()
+        return name
+
+    return base_species(a) == base_species(b)
 
 
 def _same_combatant(left: Pokemon, right: Pokemon) -> bool:

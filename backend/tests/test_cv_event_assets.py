@@ -43,6 +43,7 @@ def test_charizard_mega(event_engine: EventOcrEngine, region_config) -> None:
     assert len(megas) == 1
     assert megas[0].pokemon.species == "Charizard"
     assert megas[0].pokemon.side == "player"
+    assert megas[0].variant in {"regular", "X", "Y", "Z"}
 
 
 def test_forfeit_detected_as_battle_end(event_engine: EventOcrEngine, region_config) -> None:

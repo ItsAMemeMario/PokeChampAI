@@ -52,7 +52,7 @@ _SIDE_BANNER_RE = re.compile(
     re.IGNORECASE,
 )
 _MEGA_EVOLUTION_RE = re.compile(
-    _OPPOSING + r"(?P<species>.+?)\s+has\s+mega\s+evolv",
+    _OPPOSING + r"(?P<species>.+?)\s+[a-zA-Z]+ite\s+(?P<mega_form>(X|Y|Z)?)\s*is\s+react",
     re.IGNORECASE,
 )
 _MOVE_USED_RE = re.compile(
@@ -328,7 +328,7 @@ def _parse_weather(text: str) -> WeatherChangeEvent | None:
         if "faded" in lowered:
             return WeatherChangeEvent(raw_text=text, weather="none")
         return WeatherChangeEvent(raw_text=text, weather="sunny")
-    if "rain" in lowered:
+    if re.search(r"\brain\b", lowered):
         if "stopped" in lowered:
             return WeatherChangeEvent(raw_text=text, weather="none")
         return WeatherChangeEvent(raw_text=text, weather="rain")
@@ -336,7 +336,7 @@ def _parse_weather(text: str) -> WeatherChangeEvent | None:
         if "subsided" in lowered:
             return WeatherChangeEvent(raw_text=text, weather="none")
         return WeatherChangeEvent(raw_text=text, weather="sandstorm")
-    if "snow" in lowered:
+    if re.search(r"\bsnow\b", lowered):
         if "stopped" in lowered:
             return WeatherChangeEvent(raw_text=text, weather="none")
         return WeatherChangeEvent(raw_text=text, weather="snow")
@@ -519,9 +519,14 @@ def _parse_mega_evolution(text: str) -> MegaEvolutionEvent | None:
     match = _MEGA_EVOLUTION_RE.search(text)
     if not match:
         return None
+    species = match.group("species").strip()
+    species = re.sub(r"['\u2019]s$", "", species).strip()
+    mega_form = (match.group("mega_form") or "").strip().upper()
+    variant = mega_form if mega_form in {"X", "Y", "Z"} else "regular"
     return MegaEvolutionEvent(
         raw_text=text,
-        pokemon=_pokemon(match.group("species"), _side_from_text(text)),
+        pokemon=_pokemon(species, _side_from_text(text)),
+        variant=variant,  # type: ignore[arg-type]
     )
 
 
