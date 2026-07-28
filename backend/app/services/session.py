@@ -66,12 +66,15 @@ class SessionStore:
 
         ``TurnStartEvent`` opens ``battle_logs[turn_number]`` as a new turn
         list (starting with that event). All other events append to the
-        active turn. Returns ``(turn, index)`` pairs patched by the completer.
+        active turn. After append: completer patches partial fields, then the
+        reducer applies the (possibly patched) event to ``game_state``.
+        Returns ``(turn, index)`` pairs patched by the completer.
         """
         if isinstance(event, TurnStartEvent):
             turn = event.turn_number
             if turn < 1:
                 raise ValueError(f"TurnStartEvent turn_number must be >= 1, got {turn}")
+            self.turn_number = turn
             while len(self.battle_logs) <= turn:
                 self.battle_logs.append([])
             self.battle_logs[turn] = [event]
@@ -90,10 +93,14 @@ class SessionStore:
                 )
             self.battle_logs[turn].append(event)
 
-        # Local import avoids a circular dependency at module load time.
+        # Local imports avoid circular dependencies at module load time.
         from app.services.battle_log_completer import complete_battle_logs
+        from app.services.gamestate_reducer import apply_event_to_store
 
-        return complete_battle_logs(self)
+        patched = complete_battle_logs(self)
+        # Apply the (possibly completer-patched) event at the end of this turn.
+        apply_event_to_store(self, self.battle_logs[turn][-1])
+        return patched
 
 
 session_store = SessionStore()

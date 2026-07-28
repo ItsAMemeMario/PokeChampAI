@@ -25,7 +25,7 @@ from app.schema.gamestate import (
     StatStages,
 )
 from app.services.cv_runner import (
-    _emit_turn_start_on_battle_animation_entry,
+    _emit_turn_start_on_action_selection_entry,
     _process_hp_action_selection_snapshot,
     _process_hp_animation_frame,
 )
@@ -334,12 +334,12 @@ def test_cv_runner_snapshot_helper(mock_ocr, region_config) -> None:
     assert store.battle_logs[1][1].hp_pct_change == 50 - 100  # round(81/162*100)=50
 
 
-def test_emit_turn_start_on_battle_animation_entry() -> None:
+def test_emit_turn_start_on_action_selection_entry() -> None:
     store = SessionStore()
     store.game_state = _game_state(player_slot_1=_active("Sinistcha", 100))
     assert store.turn_number == 0
 
-    _emit_turn_start_on_battle_animation_entry(store)
+    _emit_turn_start_on_action_selection_entry(store)
     assert store.turn_number == 1
     assert store.game_state.turn_number == 1
     assert store.battle_logs[0] == []
@@ -347,7 +347,7 @@ def test_emit_turn_start_on_battle_animation_entry() -> None:
     assert store.battle_logs[1][0].type == "turn_start"
     assert store.battle_logs[1][0].turn_number == 1
 
-    _emit_turn_start_on_battle_animation_entry(store)
+    _emit_turn_start_on_action_selection_entry(store)
     assert store.turn_number == 2
     assert len(store.battle_logs) == 3
     assert store.battle_logs[2][0].type == "turn_start"

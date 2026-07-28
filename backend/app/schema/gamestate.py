@@ -17,6 +17,7 @@ class ActivePokemon(BaseModel):
     status_condition: Literal["none", "brn", "par", "slp", "psn", "tox", "frz"] = "none"
     stat_stages: StatStages
     volatile_statuses: List[str] = Field(default_factory=list) # e.g., ["taunted", "encore", "confused"]
+    is_protected_this_turn: bool = False
     is_protected_last_turn: bool = False
     
     # For the opponent, these start as None and populate as the vision model detects them
@@ -37,7 +38,7 @@ class BenchedPokemon(BaseModel):
     revealed_moves: List[str] = Field(default_factory=list)
 
 class Hazards(BaseModel):
-    spikes: Literal[0, 1] = 0
+    spikes: Literal[0, 1, 2, 3] = 0
     toxic_spikes: Literal[0, 1, 2] = 0
     stealth_rocks: Literal[0, 1] = 0
 
@@ -49,6 +50,7 @@ class SideState(BaseModel):
     tailwind_turns: int = 0
     reflect_turns: int = 0
     light_screen_turns: int = 0
+    aurora_veil_turns: int = 0
     hazards: Hazards
 
 class FieldState(BaseModel):

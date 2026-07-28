@@ -105,6 +105,7 @@ def test_phase_detector_stateful_flow(region_config) -> None:
     assert transition.previous == BattlePhase.TEAM_SELECTED
     assert transition.current == BattlePhase.BATTLE_ANIMATION
     assert transition.entered_battle_animation is True
+    assert transition.entered_battle is True
 
     transition = detector.detect_transition(_load_asset("action_selection.png"))
     assert transition.previous == BattlePhase.BATTLE_ANIMATION
@@ -116,6 +117,7 @@ def test_phase_detector_stateful_flow(region_config) -> None:
     assert transition.previous == BattlePhase.ACTION_SELECTION
     assert transition.current == BattlePhase.BATTLE_ANIMATION
     assert transition.entered_battle_animation is True
+    assert transition.entered_battle is False
 
     transition = detector.detect_transition(_load_asset("battle_text.png"))
     assert transition.previous == BattlePhase.BATTLE_ANIMATION

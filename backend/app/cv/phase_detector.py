@@ -78,6 +78,14 @@ class PhaseTransition:
         )
 
     @property
+    def entered_battle(self) -> bool:
+        """True when leaving team preview / selection into in-match animation."""
+        return self.current == BattlePhase.BATTLE_ANIMATION and self.previous in (
+            BattlePhase.TEAM_SELECTED,
+            BattlePhase.TEAM_PREVIEW,
+        )
+
+    @property
     def entered_battle_animation(self) -> bool:
         return (
             self.current == BattlePhase.BATTLE_ANIMATION
