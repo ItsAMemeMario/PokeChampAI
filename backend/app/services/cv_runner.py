@@ -1,4 +1,4 @@
-"""Background CV task: phase detection and team preview vision."""
+"""Background CV task: phase detection, OCR, and Gemini suggestions."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from app.cv.team_preview_reader import read_opponent_team_preview
 from app.cv.team_selection_reader import read_player_selected_species
 from app.schema.battle_log import TurnStartEvent
 from app.services.gamestate_reducer import ensure_seeded
-from app.services.gemini import GeminiService
+from app.services.gemini import GeminiService, previous_turn_battle_log_events
 from app.services.session import BattlePhase, SessionStore
 
 logger = logging.getLogger(__name__)
@@ -145,6 +145,46 @@ def _emit_turn_start_on_action_selection_entry(store: SessionStore) -> None:
     logger.info("Turn start: %d", store.turn_number)
 
 
+async def _process_turn_suggestion(store: SessionStore) -> None:
+    """Request a Gemini turn suggestion once per turn (debounced).
+
+    Requires team-preview opponent species; skips prompting when missing.
+    """
+    if store.player_team is None or store.game_state is None:
+        return
+    if store.turn_number < 1:
+        return
+    if not store.opponent_team_species:
+        logger.debug(
+            "Skipping turn suggestion for turn %d: opponent team species unknown",
+            store.turn_number,
+        )
+        return
+    if store._turn_suggestion_turn == store.turn_number:
+        return
+
+    try:
+        gemini = GeminiService()
+    except ValueError:
+        logger.warning("GEMINI_API_KEY not set; skipping turn suggestion")
+        return
+
+    try:
+        recent = previous_turn_battle_log_events(store.battle_logs, store.turn_number)
+        suggestion = await gemini.suggest_turn(
+            store.game_state,
+            store.player_team,
+            recent,
+            turn_number=store.turn_number,
+            opponent_team_species=store.opponent_team_species,
+        )
+        store.turn_suggestion = suggestion
+        store._turn_suggestion_turn = store.turn_number
+        logger.info("Turn suggestion ready for turn %d", store.turn_number)
+    except Exception:
+        logger.exception("Turn suggestion failed for turn %d", store.turn_number)
+
+
 async def _cv_loop(store: SessionStore) -> None:
     logger.info("CV loop started")
     detector = PhaseDetector()
@@ -193,6 +233,7 @@ async def _cv_loop(store: SessionStore) -> None:
                     hp_reader,
                     region_config,
                 )
+                await _process_turn_suggestion(store)
 
             if transition.current == BattlePhase.BATTLE_ANIMATION:
                 await asyncio.to_thread(

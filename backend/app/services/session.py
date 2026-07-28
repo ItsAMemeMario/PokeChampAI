@@ -34,6 +34,8 @@ class SessionStore:
         self.turn_suggestion: TurnSuggestion | None = None
         self.turn_number: int = 0
         self._team_preview_processed: bool = False
+        # Debounce: turn number for which we already stored a turn suggestion.
+        self._turn_suggestion_turn: int | None = None
 
     @property
     def team_loaded(self) -> bool:
@@ -55,6 +57,7 @@ class SessionStore:
         self.team_preview_suggestion = None
         self.turn_suggestion = None
         self._team_preview_processed = False
+        self._turn_suggestion_turn = None
 
     def stop_monitoring(self) -> None:
         self.cv_running = False
