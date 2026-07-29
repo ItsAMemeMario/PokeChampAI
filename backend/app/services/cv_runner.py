@@ -61,6 +61,7 @@ async def _process_team_preview_entry(store: SessionStore, frame) -> None:
             store.player_team,
             opponent.species,
         )
+        store.gemini_interaction_id = gemini.interaction_id
         logger.info(
             "Team preview suggestion ready (opponent 6: %s)",
             ", ".join(opponent.species),
@@ -68,6 +69,7 @@ async def _process_team_preview_entry(store: SessionStore, frame) -> None:
     except Exception:
         logger.exception("Team preview vision failed")
         store._team_preview_processed = False
+        store.gemini_interaction_id = gemini.interaction_id
 
 
 def _process_team_selected_frame(store: SessionStore, frame, config) -> None:
@@ -164,7 +166,7 @@ async def _process_turn_suggestion(store: SessionStore) -> None:
         return
 
     try:
-        gemini = GeminiService()
+        gemini = GeminiService(interaction_id=store.gemini_interaction_id)
     except ValueError:
         logger.warning("GEMINI_API_KEY not set; skipping turn suggestion")
         return
@@ -180,9 +182,11 @@ async def _process_turn_suggestion(store: SessionStore) -> None:
         )
         store.turn_suggestion = suggestion
         store._turn_suggestion_turn = store.turn_number
+        store.gemini_interaction_id = gemini.interaction_id
         logger.info("Turn suggestion ready for turn %d", store.turn_number)
     except Exception:
         logger.exception("Turn suggestion failed for turn %d", store.turn_number)
+        store.gemini_interaction_id = gemini.interaction_id
 
 
 async def _cv_loop(store: SessionStore) -> None:
@@ -211,6 +215,7 @@ async def _cv_loop(store: SessionStore) -> None:
             store.phase = transition.current
 
             if transition.entered_team_preview:
+                store.begin_battle()
                 await _process_team_preview_entry(store, frame)
 
             if transition.current == BattlePhase.TEAM_SELECTED:

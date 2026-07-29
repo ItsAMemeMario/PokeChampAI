@@ -102,6 +102,7 @@ async def test_cv_team_preview_pipeline_stores_suggestion() -> None:
     )
 
     mock_gemini = MagicMock()
+    mock_gemini.interaction_id = "int_preview"
     opponent_species = [
         "Blaziken",
         "Scizor",
@@ -124,7 +125,8 @@ async def test_cv_team_preview_pipeline_stores_suggestion() -> None:
     import app.services.cv_runner as cv_runner_module
 
     original = cv_runner_module.GeminiService
-    cv_runner_module.GeminiService = MagicMock(return_value=mock_gemini)
+    mock_service_cls = MagicMock(return_value=mock_gemini)
+    cv_runner_module.GeminiService = mock_service_cls
     try:
         await _process_team_preview_entry(store, image)
     finally:
@@ -133,4 +135,6 @@ async def test_cv_team_preview_pipeline_stores_suggestion() -> None:
     assert store.opponent_team_species == opponent_species
     assert store.team_preview_suggestion is not None
     assert store.team_preview_suggestion.suggested_player_lead_pair == ("Mon0", "Mon1")
+    assert store.gemini_interaction_id == "int_preview"
     mock_gemini.suggest_team_preview.assert_awaited_once()
+    mock_service_cls.assert_called_with(interaction_id=None)

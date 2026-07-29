@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
 from io import BytesIO
+from typing import Any
 
 import numpy as np
 from google import genai
-from google.genai import types
 from PIL import Image
 
 from app.schema.battle_log import BattleLogEvent
@@ -19,12 +20,16 @@ from app.schema.team import OpponentTeamPreview, PlayerTeam
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-2.5-flash"
-_VISION_IDENTIFY_SCHEMA = OpponentTeamPreview.model_json_schema()
+DEFAULT_MODEL = "gemini-3.6-flash"
 
 
 class GeminiService:
-    """Thin wrapper around google-genai for battle-assist prompts."""
+    """Thin wrapper around google-genai Interactions API for battle-assist prompts.
+
+    Keeps a stateful multi-turn conversation via ``previous_interaction_id`` for
+    the duration of one battle (team preview → battle end). Pass ``interaction_id``
+    from session state on construction; callers persist the updated ID after use.
+    """
 
     def __init__(
         self,
@@ -32,12 +37,19 @@ class GeminiService:
         api_key: str | None = None,
         model: str | None = None,
         client: genai.Client | None = None,
+        interaction_id: str | None = None,
     ) -> None:
         resolved_key = api_key or os.environ.get("GEMINI_API_KEY", "").strip()
         if client is None and not resolved_key:
             raise ValueError("GEMINI_API_KEY is not set")
         self._model = model or os.environ.get("GEMINI_MODEL", DEFAULT_MODEL)
         self._client = client or genai.Client(api_key=resolved_key)
+        self._interaction_id = interaction_id
+
+    @property
+    def interaction_id(self) -> str | None:
+        """Latest interaction ID in the current battle conversation, if any."""
+        return self._interaction_id
 
     @staticmethod
     def _rgb_to_png_bytes(image: np.ndarray) -> bytes:
@@ -45,6 +57,34 @@ class GeminiService:
         buffer = BytesIO()
         pil_image.save(buffer, format="PNG")
         return buffer.getvalue()
+
+    @staticmethod
+    def _json_response_format(schema: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": schema,
+            }
+        ]
+
+    async def _create_interaction(
+        self,
+        *,
+        input: str | list[dict[str, Any]],
+        response_schema: dict[str, Any],
+    ) -> str:
+        """Create an interaction, chaining to the prior turn when available."""
+        kwargs: dict[str, Any] = {
+            "model": self._model,
+            "input": input,
+            "response_format": self._json_response_format(response_schema),
+        }
+        if self._interaction_id:
+            kwargs["previous_interaction_id"] = self._interaction_id
+        interaction = await self._client.aio.interactions.create(**kwargs)
+        self._interaction_id = interaction.id
+        return interaction.output_text or "{}"
 
     async def identify_opponent_species(self, image: np.ndarray) -> list[str]:
         """Identify six opponent species from team-preview sprite crops."""
@@ -55,21 +95,19 @@ class GeminiService:
             "visible type icons. Return exactly six species names in top-to-bottom order "
             "using standard English species names (e.g. 'Scizor', not 'Mega Scizor')."
         )
-        response = await self._client.aio.models.generate_content(
-            model=self._model,
-            contents=[
-                prompt,
-                types.Part.from_bytes(
-                    data=self._rgb_to_png_bytes(image),
-                    mime_type="image/png",
-                ),
+        image_b64 = base64.b64encode(self._rgb_to_png_bytes(image)).decode("utf-8")
+        output_text = await self._create_interaction(
+            input=[
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image",
+                    "mime_type": "image/png",
+                    "data": image_b64,
+                },
             ],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_json_schema=_VISION_IDENTIFY_SCHEMA,
-            ),
+            response_schema=OpponentTeamPreview.model_json_schema(),
         )
-        parsed = OpponentTeamPreview.model_validate_json(response.text or "{}")
+        parsed = OpponentTeamPreview.model_validate_json(output_text)
         return parsed.species
 
     async def suggest_team_preview(
@@ -82,20 +120,16 @@ class GeminiService:
         prompt = (
             "You are a Pokemon Champions Regulation M-B doubles VGC expert.\n"
             f"Player team: {json.dumps(player_payload)}\n"
-            f"Opponent team (6): {json.dumps(opponent_species)}\n"
+            f"Opponent team: {json.dumps(opponent_species)}\n"
             "Predict which 4 the opponent will bring and suggest which 4 the player should "
             "bring, including selection order (first two entries in each bring list are the "
             "lead pair). Return JSON matching the TeamPreviewSuggestion schema."
         )
-        response = await self._client.aio.models.generate_content(
-            model=self._model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_json_schema=TeamPreviewSuggestion.model_json_schema(),
-            ),
+        output_text = await self._create_interaction(
+            input=prompt,
+            response_schema=TeamPreviewSuggestion.model_json_schema(),
         )
-        return TeamPreviewSuggestion.model_validate_json(response.text or "{}")
+        return TeamPreviewSuggestion.model_validate_json(output_text)
 
     async def suggest_turn(
         self,
@@ -163,15 +197,11 @@ class GeminiService:
             "switch_in = a benched player species). Do not invent illegal moves.\n"
             "Return JSON matching the TurnSuggestion schema."
         )
-        response = await self._client.aio.models.generate_content(
-            model=self._model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_json_schema=TurnSuggestion.model_json_schema(),
-            ),
+        output_text = await self._create_interaction(
+            input=prompt,
+            response_schema=TurnSuggestion.model_json_schema(),
         )
-        suggestion = TurnSuggestion.model_validate_json(response.text or "{}")
+        suggestion = TurnSuggestion.model_validate_json(output_text)
         # Prefer the authoritative turn number from the session/game state.
         if suggestion.turn_number != resolved_turn:
             suggestion = suggestion.model_copy(update={"turn_number": resolved_turn})

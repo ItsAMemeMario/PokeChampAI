@@ -36,6 +36,8 @@ class SessionStore:
         self._team_preview_processed: bool = False
         # Debounce: turn number for which we already stored a turn suggestion.
         self._turn_suggestion_turn: int | None = None
+        # Gemini Interactions API conversation id for the current battle.
+        self.gemini_interaction_id: str | None = None
 
     @property
     def team_loaded(self) -> bool:
@@ -44,11 +46,12 @@ class SessionStore:
     def set_team(self, team: PlayerTeam) -> None:
         self.player_team = team
 
-    def start_monitoring(self) -> None:
-        if self.player_team is None:
-            raise ValueError("Team must be saved before starting monitoring")
-        self.cv_running = True
-        self.phase = BattlePhase.IDLE
+    def begin_battle(self) -> None:
+        """Reset per-battle state when a new team preview starts.
+
+        Clears the Gemini conversation so the next prompt creates a fresh
+        interaction rather than continuing the previous match.
+        """
         self.turn_number = 0
         self.game_state = None
         self.battle_logs = [[]]
@@ -58,6 +61,14 @@ class SessionStore:
         self.turn_suggestion = None
         self._team_preview_processed = False
         self._turn_suggestion_turn = None
+        self.gemini_interaction_id = None
+
+    def start_monitoring(self) -> None:
+        if self.player_team is None:
+            raise ValueError("Team must be saved before starting monitoring")
+        self.cv_running = True
+        self.phase = BattlePhase.IDLE
+        self.begin_battle()
 
     def stop_monitoring(self) -> None:
         self.cv_running = False

@@ -18,7 +18,7 @@ from app.schema.gamestate import (
     SideState,
     StatStages,
 )
-from app.schema.suggestions import Move, Switch, TurnAction, TurnSuggestion
+from app.schema.suggestions import Move, Switch, TeamPreviewSuggestion, TurnAction, TurnSuggestion
 from app.schema.team import PlayerPokemon, PlayerTeam
 from app.services.gemini import (
     GeminiService,
@@ -266,13 +266,14 @@ def _opponent_six() -> list[str]:
 @pytest.mark.asyncio
 async def test_suggest_turn_uses_structured_json_and_validates() -> None:
     suggestion = _legal_suggestion(turn=2)
-    mock_response = MagicMock()
-    mock_response.text = suggestion.model_dump_json()
+    mock_interaction = MagicMock()
+    mock_interaction.id = "int_turn_2"
+    mock_interaction.output_text = suggestion.model_dump_json()
 
-    mock_aio_models = MagicMock()
-    mock_aio_models.generate_content = AsyncMock(return_value=mock_response)
+    mock_aio_interactions = MagicMock()
+    mock_aio_interactions.create = AsyncMock(return_value=mock_interaction)
     mock_client = MagicMock()
-    mock_client.aio.models = mock_aio_models
+    mock_client.aio.interactions = mock_aio_interactions
 
     opponent_six = [
         "Scizor",
@@ -295,13 +296,16 @@ async def test_suggest_turn_uses_structured_json_and_validates() -> None:
     assert len(result.actions) == 2
     assert isinstance(result.actions[0].action, Move)
     assert result.actions[0].action.move == "Matcha Gotcha"
+    assert service.interaction_id == "int_turn_2"
 
-    mock_aio_models.generate_content.assert_awaited_once()
-    call_kwargs = mock_aio_models.generate_content.await_args.kwargs
-    config = call_kwargs["config"]
-    assert config.response_mime_type == "application/json"
-    assert "TurnSuggestion" in json.dumps(config.response_json_schema)
-    prompt = call_kwargs["contents"]
+    mock_aio_interactions.create.assert_awaited_once()
+    call_kwargs = mock_aio_interactions.create.await_args.kwargs
+    assert call_kwargs["model"] == "gemini-3.6-flash"
+    assert "previous_interaction_id" not in call_kwargs
+    response_format = call_kwargs["response_format"]
+    assert response_format[0]["mime_type"] == "application/json"
+    assert "TurnSuggestion" in json.dumps(response_format[0]["schema"])
+    prompt = call_kwargs["input"]
     assert "Matcha Gotcha" in prompt
     assert "Known legal moves" in prompt
     assert "turn 2" in prompt
@@ -317,12 +321,13 @@ async def test_suggest_turn_uses_structured_json_and_validates() -> None:
 @pytest.mark.asyncio
 async def test_suggest_turn_labels_leftover_as_not_brought_when_bring_complete() -> None:
     suggestion = _legal_suggestion(turn=3)
-    mock_response = MagicMock()
-    mock_response.text = suggestion.model_dump_json()
-    mock_aio_models = MagicMock()
-    mock_aio_models.generate_content = AsyncMock(return_value=mock_response)
+    mock_interaction = MagicMock()
+    mock_interaction.id = "int_turn_3"
+    mock_interaction.output_text = suggestion.model_dump_json()
+    mock_aio_interactions = MagicMock()
+    mock_aio_interactions.create = AsyncMock(return_value=mock_interaction)
     mock_client = MagicMock()
-    mock_client.aio.models = mock_aio_models
+    mock_client.aio.interactions = mock_aio_interactions
 
     service = GeminiService(api_key="test-key", client=mock_client)
     await service.suggest_turn(
@@ -333,7 +338,7 @@ async def test_suggest_turn_labels_leftover_as_not_brought_when_bring_complete()
         opponent_team_species=_opponent_six(),
     )
 
-    prompt = mock_aio_models.generate_content.await_args.kwargs["contents"]
+    prompt = mock_aio_interactions.create.await_args.kwargs["input"]
     assert "Opponent species not brought to battle" in prompt
     assert "still unrevealed" not in prompt
     assert "Aerodactyl" in prompt
@@ -367,12 +372,13 @@ async def test_suggest_turn_rejects_hallucinated_move_from_model() -> None:
         ],
         overall_reasoning="Bad",
     )
-    mock_response = MagicMock()
-    mock_response.text = bad.model_dump_json()
-    mock_aio_models = MagicMock()
-    mock_aio_models.generate_content = AsyncMock(return_value=mock_response)
+    mock_interaction = MagicMock()
+    mock_interaction.id = "int_bad"
+    mock_interaction.output_text = bad.model_dump_json()
+    mock_aio_interactions = MagicMock()
+    mock_aio_interactions.create = AsyncMock(return_value=mock_interaction)
     mock_client = MagicMock()
-    mock_client.aio.models = mock_aio_models
+    mock_client.aio.interactions = mock_aio_interactions
 
     service = GeminiService(api_key="test-key", client=mock_client)
     with pytest.raises(ValueError, match="Illegal move"):
@@ -388,7 +394,7 @@ async def test_suggest_turn_rejects_hallucinated_move_from_model() -> None:
 @pytest.mark.asyncio
 async def test_suggest_turn_requires_opponent_team_species() -> None:
     mock_client = MagicMock()
-    mock_client.aio.models.generate_content = AsyncMock()
+    mock_client.aio.interactions.create = AsyncMock()
     service = GeminiService(api_key="test-key", client=mock_client)
 
     with pytest.raises(ValueError, match="opponent_team_species is required"):
@@ -407,7 +413,54 @@ async def test_suggest_turn_requires_opponent_team_species() -> None:
             turn_number=1,
             opponent_team_species=[],
         )
-    mock_client.aio.models.generate_content.assert_not_awaited()
+    mock_client.aio.interactions.create.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_battle_conversation_chains_previous_interaction_id() -> None:
+    preview = TeamPreviewSuggestion(
+        predicted_opponent_bring=["Scizor", "Hatterene", "Blaziken", "Milotic"],
+        predicted_opponent_lead_pair=("Scizor", "Hatterene"),
+        suggested_player_bring=[
+            "Sinistcha",
+            "Staraptor",
+            "Incineroar",
+            "Rillaboom",
+        ],
+        suggested_player_lead_pair=("Sinistcha", "Staraptor"),
+        reasoning="Standard",
+    )
+    turn = _legal_suggestion(turn=1)
+
+    first = MagicMock()
+    first.id = "int_preview"
+    first.output_text = preview.model_dump_json()
+    second = MagicMock()
+    second.id = "int_turn_1"
+    second.output_text = turn.model_dump_json()
+
+    mock_aio_interactions = MagicMock()
+    mock_aio_interactions.create = AsyncMock(side_effect=[first, second])
+    mock_client = MagicMock()
+    mock_client.aio.interactions = mock_aio_interactions
+
+    service = GeminiService(api_key="test-key", client=mock_client)
+    await service.suggest_team_preview(_sample_team(), _opponent_six())
+    assert service.interaction_id == "int_preview"
+
+    await service.suggest_turn(
+        _game_state(turn=1),
+        _sample_team(),
+        [],
+        turn_number=1,
+        opponent_team_species=_opponent_six(),
+    )
+    assert service.interaction_id == "int_turn_1"
+
+    first_kwargs = mock_aio_interactions.create.await_args_list[0].kwargs
+    second_kwargs = mock_aio_interactions.create.await_args_list[1].kwargs
+    assert "previous_interaction_id" not in first_kwargs
+    assert second_kwargs["previous_interaction_id"] == "int_preview"
 
 
 @pytest.mark.asyncio
@@ -418,6 +471,7 @@ async def test_process_turn_suggestion_stores_and_debounces() -> None:
     store.player_team = _sample_team()
     store.game_state = _game_state(turn=2)
     store.turn_number = 2
+    store.gemini_interaction_id = "int_prior"
     store.opponent_team_species = [
         "Scizor",
         "Hatterene",
@@ -444,9 +498,11 @@ async def test_process_turn_suggestion_stores_and_debounces() -> None:
     suggestion = _legal_suggestion(turn=2)
     mock_gemini = MagicMock()
     mock_gemini.suggest_turn = AsyncMock(return_value=suggestion)
+    mock_gemini.interaction_id = "int_turn_2"
 
     original = cv_runner_module.GeminiService
-    cv_runner_module.GeminiService = MagicMock(return_value=mock_gemini)
+    mock_service_cls = MagicMock(return_value=mock_gemini)
+    cv_runner_module.GeminiService = mock_service_cls
     try:
         await cv_runner_module._process_turn_suggestion(store)
         await cv_runner_module._process_turn_suggestion(store)
@@ -455,12 +511,27 @@ async def test_process_turn_suggestion_stores_and_debounces() -> None:
 
     assert store.turn_suggestion == suggestion
     assert store._turn_suggestion_turn == 2
+    assert store.gemini_interaction_id == "int_turn_2"
     mock_gemini.suggest_turn.assert_awaited_once()
+    mock_service_cls.assert_called_with(interaction_id="int_prior")
     args = mock_gemini.suggest_turn.await_args.args
     kwargs = mock_gemini.suggest_turn.await_args.kwargs
     assert args[2] == prior_events
     assert kwargs["opponent_team_species"] == store.opponent_team_species
     assert kwargs["turn_number"] == 2
+
+
+def test_begin_battle_clears_gemini_conversation() -> None:
+    store = SessionStore()
+    store.gemini_interaction_id = "int_old"
+    store.turn_number = 4
+    store._team_preview_processed = True
+    store.opponent_team_species = _opponent_six()
+    store.begin_battle()
+    assert store.gemini_interaction_id is None
+    assert store.turn_number == 0
+    assert store._team_preview_processed is False
+    assert store.opponent_team_species is None
 
 
 @pytest.mark.asyncio

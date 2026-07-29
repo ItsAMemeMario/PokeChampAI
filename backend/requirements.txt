@@ -2,7 +2,7 @@ fastapi
 uvicorn[standard]
 pydantic>=2
 python-dotenv
-google-genai
+google-genai>=2.3.0
 opencv-python
 easyocr
 numpy
