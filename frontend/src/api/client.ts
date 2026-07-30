@@ -1,4 +1,10 @@
 import type { PlayerTeam, SessionStatus } from "../types/team";
+import type {
+  BattleLogEvent,
+  GameState,
+  TeamPreviewPayload,
+  TurnSuggestion,
+} from "../types/battle";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
 
@@ -77,6 +83,17 @@ export const api = {
 
   stopSession: () =>
     request<SessionStatus>("/api/session/stop", { method: "POST" }),
+
+  getState: () => request<{ game_state: GameState | null }>("/api/state"),
+
+  getLogs: (limit = 100) =>
+    request<{ events: BattleLogEvent[] }>(`/api/logs?limit=${limit}`),
+
+  getTeamPreviewSuggestion: () =>
+    request<TeamPreviewPayload>("/api/suggestions/team-preview"),
+
+  getTurnSuggestion: () =>
+    request<{ suggestion: TurnSuggestion | null }>("/api/suggestions/turn"),
 };
 
 export function getWebSocketUrl(): string {

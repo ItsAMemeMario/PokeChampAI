@@ -114,6 +114,22 @@ class SessionStore:
         patched = complete_battle_logs(self)
         # Apply the (possibly completer-patched) event at the end of this turn.
         apply_event_to_store(self, self.battle_logs[turn][-1])
+
+        # Live dashboard: push log patches, the appended event, and latest state.
+        from app.services.ws_hub import (
+            publish_log,
+            publish_log_patched,
+            publish_state,
+        )
+
+        for patch_turn, patch_index in patched:
+            publish_log_patched(
+                patch_turn,
+                patch_index,
+                self.battle_logs[patch_turn][patch_index],
+            )
+        publish_log(self.battle_logs[turn][-1])
+        publish_state(self)
         return patched
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
@@ -10,8 +11,15 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import session_router, suggestions_router, team_router
+from app.api.routes import (
+    session_router,
+    state_router,
+    suggestions_router,
+    team_router,
+    ws_router,
+)
 from app.services.cv_runner import shutdown_cv
+from app.services.ws_hub import ws_hub
 
 load_dotenv()
 
@@ -21,6 +29,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting application")
+    ws_hub.set_loop(asyncio.get_running_loop())
     yield
     await shutdown_cv()
     logger.info("Application shutdown complete")
@@ -43,6 +52,8 @@ app.add_middleware(
 app.include_router(team_router)
 app.include_router(session_router)
 app.include_router(suggestions_router)
+app.include_router(state_router)
+app.include_router(ws_router)
 
 
 @app.get("/api/health")
