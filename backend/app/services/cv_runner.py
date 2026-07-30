@@ -81,9 +81,8 @@ def _process_team_selected_frame(store: SessionStore, frame, config) -> None:
     except Exception:
         logger.exception("Player team selection read failed")
         return
-    if selected != store.player_selected_species:
-        store.player_selected_species = selected
-        logger.info("Player selected bring: %s", ", ".join(selected))
+    store.player_selected_species = selected
+    logger.info("Player selected bring: %s", ", ".join(selected))
 
 
 def _process_battle_animation_events(
