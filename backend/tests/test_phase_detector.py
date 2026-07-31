@@ -10,6 +10,7 @@ from app.cv.phase_detector import (
     PhaseDetector,
     detect_phase,
     has_battle_ended,
+    is_standby_screen_visible,
     is_team_selection_standby_visible,
 )
 from app.cv.regions import config_for_image, default_assets_dir, load_regions
@@ -75,6 +76,28 @@ def test_is_team_selection_standby_on_reference(region_config) -> None:
     preview = _load_asset("team_preview.png")
     preview_config = config_for_image(region_config, preview)
     assert is_team_selection_standby_visible(preview, preview_config) is False
+
+
+def test_is_standby_screen_template_match(region_config) -> None:
+    """Near-gray template match detects Communicating... without OCR."""
+    standby = _load_asset("standby.png")
+    standby_config = config_for_image(region_config, standby)
+    assert is_standby_screen_visible(standby, standby_config) is True
+
+    action = _load_asset("action_selection.png")
+    action_config = config_for_image(region_config, action)
+    assert is_standby_screen_visible(action, action_config) is False
+
+    battle = _load_asset("battle_text.png")
+    battle_config = config_for_image(region_config, battle)
+    assert is_standby_screen_visible(battle, battle_config) is False
+
+
+def test_action_selection_poll_interval_is_five_fps() -> None:
+    from app.services.cv_runner import _ACTION_SELECTION_POLL_SEC, _poll_interval
+
+    assert abs(_ACTION_SELECTION_POLL_SEC - 0.2) < 1e-9
+    assert abs(_poll_interval(BattlePhase.ACTION_SELECTION) - 0.2) < 1e-9
 
 
 def test_phase_detector_strict_idle_to_team_preview_only(region_config) -> None:

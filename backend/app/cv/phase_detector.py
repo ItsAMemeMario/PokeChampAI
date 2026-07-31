@@ -26,9 +26,13 @@ logger = logging.getLogger(__name__)
 # Thresholds tuned on assets/cv reference screenshots at 1600x900.
 _FIGHT_PURPLE_RATIO_MIN = 70.0
 _FIGHT_TEMPLATE_SCORE_MIN = 0.55
+_STANDBY_TEMPLATE_SCORE_MIN = 0.55
 _TEAM_PREVIEW_RED_RATIO_MIN = 55.0
 _BATTLE_UI_STD_MIN = 35.0
 _BATTLE_UI_MEAN_MIN = 25.0
+# Same near-gray + bright mask as HP slot cards (white "Communicating..." text).
+_STANDBY_CHROMA_MAX = 25
+_STANDBY_BRIGHT_MIN = 160
 
 _BATTLE_UI_REGIONS = (
     "player_slot_1_card",
@@ -43,7 +47,6 @@ _BATTLE_UI_REGIONS = (
 )
 
 _BATTLE_END_TEXTS = ("forfeit", "forteit", "you defeated", "you lost to", "has ended")
-_STANDBY_COMMUNICATING_MARKERS = ("communicat",)
 _TEAM_SELECTION_STANDBY_MARKERS = ("preparing",)
 
 
@@ -95,16 +98,20 @@ class PhaseTransition:
 
 @lru_cache(maxsize=1)
 def _fight_button_template() -> np.ndarray | None:
-    """Grayscale FIGHT button crop from the action_selection reference screenshot."""
-    ref_path = default_assets_dir() / "action_selection.png"
-    if not ref_path.is_file():
+    """Load grayscale FIGHT button template from assets/cv."""
+    path = default_assets_dir() / "fight_button_template.png"
+    if not path.is_file():
         return None
+    return np.asarray(Image.open(path).convert("L"), dtype=np.uint8)
 
-    config = load_regions()
-    rgb = np.asarray(Image.open(ref_path).convert("RGB"), dtype=np.uint8)
-    display_config = config_for_image(config, rgb)
-    crop = crop_region(rgb, display_config.get("fight_button"))
-    return cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+
+@lru_cache(maxsize=1)
+def _standby_screen_template() -> np.ndarray | None:
+    """Load near-gray/bright 'Communicating...' template from assets/cv."""
+    path = default_assets_dir() / "standby_screen_template.png"
+    if not path.is_file():
+        return None
+    return np.asarray(Image.open(path).convert("L"), dtype=np.uint8)
 
 
 def _purple_ratio(hsv: np.ndarray) -> float:
@@ -119,11 +126,25 @@ def _red_ratio(hsv: np.ndarray) -> float:
     return float(combined.mean())
 
 
+def _preprocess_near_gray_bright(crop_rgb: np.ndarray) -> np.ndarray:
+    """Keep near-gray bright pixels (white UI text); drop colored background."""
+    r = crop_rgb[:, :, 0].astype(np.int16)
+    g = crop_rgb[:, :, 1].astype(np.int16)
+    b = crop_rgb[:, :, 2].astype(np.int16)
+    chroma = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+    brightness = (r + g + b) // 3
+    keep = (chroma <= _STANDBY_CHROMA_MAX) & (brightness >= _STANDBY_BRIGHT_MIN)
+    masked = np.zeros(crop_rgb.shape[:2], dtype=np.uint8)
+    masked[keep] = 255
+    return masked
+
+
 def _preprocess_prompt_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
     upscaled = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB)
+
 
 def _ocr_text(crop_rgb: np.ndarray) -> str:
     reader = getattr(_ocr_text, "_reader", None)
@@ -134,18 +155,15 @@ def _ocr_text(crop_rgb: np.ndarray) -> str:
     lines = reader.readtext(prepared, detail=0, paragraph=True)
     return " ".join(lines).strip()
 
+
 def _ocr_prompt_mentions_select_four(crop_rgb: np.ndarray) -> bool:
     text = _ocr_text(crop_rgb)
     return "select" in text and "4" in text
 
+
 def _ocr_prompt_indicates_end(crop_rgb: np.ndarray) -> bool:
     text = _ocr_text(crop_rgb).lower()
     return any(marker in text for marker in _BATTLE_END_TEXTS)
-
-
-def _ocr_prompt_indicates_standby(crop_rgb: np.ndarray) -> bool:
-    text = _ocr_text(crop_rgb).lower()
-    return any(marker in text for marker in _STANDBY_COMMUNICATING_MARKERS)
 
 
 def _ocr_prompt_indicates_team_selection_standby(crop_rgb: np.ndarray) -> bool:
@@ -172,7 +190,16 @@ def has_battle_ended(image: np.ndarray, config: RegionConfig) -> bool:
 def is_standby_screen_visible(image: np.ndarray, config: RegionConfig) -> bool:
     """Return True when the center standby screen shows 'Communicating...'."""
     crop = crop_region(image, config.get("standby_screen"))
-    return _ocr_prompt_indicates_standby(crop)
+    prepared = _preprocess_near_gray_bright(crop)
+
+    template = _standby_screen_template()
+    if template is None:
+        return False
+
+    if prepared.shape != template.shape:
+        template = cv2.resize(template, (prepared.shape[1], prepared.shape[0]))
+    score = cv2.matchTemplate(prepared, template, cv2.TM_CCOEFF_NORMED)[0, 0]
+    return float(score) >= _STANDBY_TEMPLATE_SCORE_MIN
 
 
 def is_team_selection_standby_visible(image: np.ndarray, config: RegionConfig) -> bool:

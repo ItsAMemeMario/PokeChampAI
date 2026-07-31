@@ -23,7 +23,7 @@ _cv_task: asyncio.Task[None] | None = None
 _ADB_PROBE_INTERVAL_SEC = 5.0
 _TEAM_PREVIEW_POLL_SEC = 1.0
 _TEAM_SELECTED_POLL_SEC = 1.0
-_ACTION_SELECTION_POLL_SEC = 1.0
+_ACTION_SELECTION_POLL_SEC = 1.0 / 5.0  # 5 FPS — catch brief "Communicating..." standby
 _BATTLE_ANIMATION_POLL_SEC = 1.0 / 3.0  # 3 FPS — HP reader + event OCR
 _DEFAULT_POLL_SEC = 0.5
 
