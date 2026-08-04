@@ -8,7 +8,7 @@ supply the missing data — before the reducer / Gemini see the log.
 
 from __future__ import annotations
 
-from app.data.spread_moves import spread_kind
+from app.data.moves import spread_kind
 from app.schema.battle_log import (
     AbilityTriggeredEvent,
     BattleLogEvent,
