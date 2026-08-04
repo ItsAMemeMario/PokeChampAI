@@ -51,6 +51,9 @@ class EventOcrEngine:
         self,
         image: np.ndarray,
         config: RegionConfig,
+        *,
+        player_species: list[str] | None = None,
+        opponent_species: list[str] | None = None,
     ) -> list[BattleLogEvent]:
         """OCR changed event regions and return parsed battle log events."""
         display_config = config_for_image(config, image)
@@ -76,7 +79,14 @@ class EventOcrEngine:
             if text == self._last_emitted_text.get(region_name):
                 continue
 
-            region_events = self._parse_region(region_name, side, slot, text)
+            region_events = self._parse_region(
+                region_name,
+                side,
+                slot,
+                text,
+                player_species=player_species,
+                opponent_species=opponent_species,
+            )
             if not region_events:
                 logger.debug("Unparsed OCR in %s: %r", region_name, text)
                 continue
@@ -92,12 +102,25 @@ class EventOcrEngine:
         side: Side | None,
         slot: Slot | None,
         text: str,
+        *,
+        player_species: list[str] | None = None,
+        opponent_species: list[str] | None = None,
     ) -> list[BattleLogEvent]:
         if region_name == "battle_text":
-            return parse_battle_text(text)
+            return parse_battle_text(
+                text,
+                player_species=player_species,
+                opponent_species=opponent_species,
+            )
 
         assert side is not None and slot is not None
-        event = parse_side_banner(text, side, slot=slot)
+        event = parse_side_banner(
+            text,
+            side,
+            slot=slot,
+            player_species=player_species,
+            opponent_species=opponent_species,
+        )
         return [event] if event is not None else []
 
 

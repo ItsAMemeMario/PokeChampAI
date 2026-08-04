@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from contextvars import ContextVar
 from typing import Iterable
 
 from app.schema.battle_log import (
@@ -23,8 +24,21 @@ from app.schema.battle_log import (
     VolatileAppliedEvent,
     WeatherChangeEvent,
 )
-from app.data.items import is_regulation_mb_item
+from app.data.abilities import REGULATION_MB_ABILITIES
+from app.data.items import REGULATION_MB_ITEMS, is_regulation_mb_item
+from app.data.moves import REGULATION_MB_MOVES
+from app.data.species import REGULATION_MB_SPECIES
 from app.schema.common import Pokemon, Side, Slot
+from app.util.legal_snap import prefer_known_species, snap_to_legal
+
+_PLAYER_SPECIES: ContextVar[tuple[str, ...]] = ContextVar(
+    "event_parser_player_species",
+    default=(),
+)
+_OPPONENT_SPECIES: ContextVar[tuple[str, ...]] = ContextVar(
+    "event_parser_opponent_species",
+    default=(),
+)
 
 _STAT_ALIASES: dict[str, str] = {
     "attack": "atk",
@@ -177,17 +191,66 @@ def _side_from_text(text: str) -> Side:
     return "opponent" if ("opposing" in lowered or "opponent" in lowered) else "player"
 
 
-def _pokemon(species: str, side: Side, *, slot: Slot = 1) -> Pokemon:
+def _clean_species_raw(species: str) -> str:
     species = species.strip().rstrip("!.,").strip()
     if species.lower().startswith("the opposing "):
         species = species[len("the opposing ") :].strip()
     if species.lower().startswith("opposing "):
         species = species[len("opposing ") :].strip()
-    return Pokemon(species=species, side=side, slot=slot)
+    return species
+
+
+def _side_known_species(
+    side: Side,
+    *,
+    player_species: Iterable[str] | None = None,
+    opponent_species: Iterable[str] | None = None,
+) -> tuple[str, ...]:
+    """Return the side-specific known list used to resolve OCR species names."""
+    if side == "player":
+        if player_species is not None:
+            return tuple(player_species)
+        return _PLAYER_SPECIES.get()
+    if opponent_species is not None:
+        return tuple(opponent_species)
+    return _OPPONENT_SPECIES.get()
+
+
+def _pokemon(
+    species: str,
+    side: Side,
+    *,
+    slot: Slot = 1,
+    player_species: Iterable[str] | None = None,
+    opponent_species: Iterable[str] | None = None,
+) -> Pokemon:
+    cleaned = _clean_species_raw(species)
+    known = _side_known_species(
+        side,
+        player_species=player_species,
+        opponent_species=opponent_species,
+    )
+    snapped = prefer_known_species(cleaned, known, REGULATION_MB_SPECIES)
+    return Pokemon(species=snapped, side=side, slot=slot)
+
+
+def _snap_item(name: str) -> str:
+    return snap_to_legal(name, REGULATION_MB_ITEMS) or name.strip()
+
+
+def _snap_ability(name: str) -> str:
+    return snap_to_legal(name, REGULATION_MB_ABILITIES) or name.strip()
+
+
+def _snap_move(name: str) -> str:
+    return snap_to_legal(name, REGULATION_MB_MOVES) or name.strip()
 
 
 def is_known_item(name: str) -> bool:
-    """Return True if ``name`` is a Regulation M-B legal held item."""
+    """Return True if ``name`` is a Regulation M-B legal held item (after snap)."""
+    snapped = snap_to_legal(name, REGULATION_MB_ITEMS)
+    if snapped is not None:
+        return True
     return is_regulation_mb_item(name)
 
 
@@ -197,6 +260,8 @@ def parse_side_banner(
     *,
     slot: Slot = 1,
     effect_text: str = "",
+    player_species: Iterable[str] | None = None,
+    opponent_species: Iterable[str] | None = None,
 ) -> BattleLogEvent | None:
     """Parse a per-slot banner OCR string into an ability or item event.
 
@@ -209,15 +274,25 @@ def parse_side_banner(
 
     species = match.group("species").strip()
     name = match.group("name").strip()
-    pokemon = _pokemon(species, side, slot=slot)
+    pokemon = _pokemon(
+        species,
+        side,
+        slot=slot,
+        player_species=player_species,
+        opponent_species=opponent_species,
+    )
 
     if is_known_item(name):
-        return ItemUsedEvent(raw_text=text, pokemon=pokemon, item=name)
+        return ItemUsedEvent(
+            raw_text=text,
+            pokemon=pokemon,
+            item=_snap_item(name),
+        )
 
     return AbilityTriggeredEvent(
         raw_text=text,
         actor=pokemon,
-        ability=name,
+        ability=_snap_ability(name),
         effect_text=effect_text,
     )
 
@@ -541,7 +616,7 @@ def _parse_move_used(text: str) -> MoveUsedEvent | None:
     return MoveUsedEvent(
         raw_text=text,
         actor=_pokemon(match.group("species"), _side_from_text(text)),
-        move=move,
+        move=_snap_move(move),
         targets=[],
     )
 
@@ -563,34 +638,51 @@ def _parse_move_failed(text: str) -> MoveFailedEvent | None:
     return MoveFailedEvent(raw_text=text)
 
 
-def parse_battle_text(text: str) -> list[BattleLogEvent]:
+def parse_battle_text(
+    text: str,
+    *,
+    player_species: Iterable[str] | None = None,
+    opponent_species: Iterable[str] | None = None,
+) -> list[BattleLogEvent]:
     """Parse bottom battle-text OCR into one or more typed events."""
     normalized = normalize_ocr_text(text)
     if not normalized:
         return []
 
-    events: list[BattleLogEvent] = []
+    player_token = None
+    opponent_token = None
+    if player_species is not None:
+        player_token = _PLAYER_SPECIES.set(tuple(player_species))
+    if opponent_species is not None:
+        opponent_token = _OPPONENT_SPECIES.set(tuple(opponent_species))
+    try:
+        events: list[BattleLogEvent] = []
 
-    for multi_parser in (_parse_stat_changes, _parse_switch):
-        events.extend(multi_parser(normalized))
+        for multi_parser in (_parse_stat_changes, _parse_switch):
+            events.extend(multi_parser(normalized))
 
-    for single_parser in (
-        _parse_mega_evolution,
-        _parse_move_used,
-        _parse_move_failed,
-        _parse_faint,
-        _parse_status,
-        _parse_volatile,
-        _parse_weather,
-        _parse_terrain,
-        _parse_trick_room,
-        _parse_side_condition,
-    ):
-        event = single_parser(normalized)
-        if event is not None:
-            events.append(event)
+        for single_parser in (
+            _parse_mega_evolution,
+            _parse_move_used,
+            _parse_move_failed,
+            _parse_faint,
+            _parse_status,
+            _parse_volatile,
+            _parse_weather,
+            _parse_terrain,
+            _parse_trick_room,
+            _parse_side_condition,
+        ):
+            event = single_parser(normalized)
+            if event is not None:
+                events.append(event)
 
-    return _dedupe_events(events)
+        return _dedupe_events(events)
+    finally:
+        if player_token is not None:
+            _PLAYER_SPECIES.reset(player_token)
+        if opponent_token is not None:
+            _OPPONENT_SPECIES.reset(opponent_token)
 
 
 def _event_dedupe_key(event: BattleLogEvent) -> tuple:

@@ -92,7 +92,12 @@ def _process_battle_animation_events(
     config,
 ) -> None:
     """OCR changed per-slot banners and battle text, appending parsed events."""
-    for event in event_ocr.process_frame(frame, config):
+    for event in event_ocr.process_frame(
+        frame,
+        config,
+        player_species=store.player_selected_species,
+        opponent_species=store.opponent_team_species,
+    ):
         store.append_battle_log(event)
         logger.info("Battle log event: %s — %r", event.type, event.raw_text)
 

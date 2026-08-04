@@ -4,7 +4,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from app.data.abilities import REGULATION_MB_ABILITIES
 from app.data.items import REGULATION_MB_ITEMS
+from app.data.moves import REGULATION_MB_MOVES
+from app.data.species import REGULATION_MB_SPECIES
 from app.util.pokepaste_parser import parse
 
 
@@ -16,6 +19,14 @@ class PlayerPokemon(BaseModel):
     nature: str
     moves: list[str]
 
+    @field_validator("species")
+    @classmethod
+    def species_must_be_regulation_mb_legal(cls, value: str) -> str:
+        species = value.strip()
+        if species not in REGULATION_MB_SPECIES:
+            raise ValueError(f"Species '{species}' is not legal in Regulation M-B")
+        return species
+
     @field_validator("item")
     @classmethod
     def item_must_be_regulation_mb_legal(cls, value: str) -> str:
@@ -23,6 +34,25 @@ class PlayerPokemon(BaseModel):
         if item not in REGULATION_MB_ITEMS:
             raise ValueError(f"Item '{item}' is not legal in Regulation M-B")
         return item
+
+    @field_validator("ability")
+    @classmethod
+    def ability_must_be_regulation_mb_legal(cls, value: str) -> str:
+        ability = value.strip()
+        if ability not in REGULATION_MB_ABILITIES:
+            raise ValueError(f"Ability '{ability}' is not legal in Regulation M-B")
+        return ability
+
+    @field_validator("moves")
+    @classmethod
+    def moves_must_be_regulation_mb_legal(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for move in value:
+            name = move.strip()
+            if name not in REGULATION_MB_MOVES:
+                raise ValueError(f"Move '{name}' is not legal in Regulation M-B")
+            cleaned.append(name)
+        return cleaned
 
 
 class PlayerTeam(BaseModel):

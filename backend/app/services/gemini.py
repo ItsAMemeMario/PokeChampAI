@@ -17,6 +17,8 @@ from app.schema.battle_log import BattleLogEvent
 from app.schema.gamestate import GameState
 from app.schema.suggestions import Move, Switch, TeamPreviewSuggestion, TurnSuggestion
 from app.schema.team import OpponentTeamPreview, PlayerTeam
+from app.data.species import REGULATION_MB_SPECIES
+from app.util.legal_snap import prefer_known_species
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +95,9 @@ class GeminiService:
             "The image shows six opponent Pokemon sprites stacked vertically, top to bottom. "
             "No species names are visible — identify each Pokemon from its sprite and any "
             "visible type icons. Return exactly six species names in top-to-bottom order "
-            "using standard English species names (e.g. 'Scizor', not 'Mega Scizor')."
+            "using standard English Showdown names. Use hyphenated form names when the "
+            "sprite is a regional or alternate form (e.g. 'Goodra-Hisui', 'Arcanine-Hisui', "
+            "'Lycanroc-Dusk', 'Urshifu-Rapid-Strike'). Do not use mega or G-Max names."
         )
         image_b64 = base64.b64encode(self._rgb_to_png_bytes(image)).decode("utf-8")
         output_text = await self._create_interaction(
@@ -108,7 +112,10 @@ class GeminiService:
             response_schema=OpponentTeamPreview.model_json_schema(),
         )
         parsed = OpponentTeamPreview.model_validate_json(output_text)
-        return parsed.species
+        return [
+            prefer_known_species(name, (), REGULATION_MB_SPECIES)
+            for name in parsed.species
+        ]
 
     async def suggest_team_preview(
         self,
