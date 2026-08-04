@@ -23,7 +23,7 @@ from app.schema.battle_log import (
     VolatileAppliedEvent,
     WeatherChangeEvent,
 )
-from app.data.regulation_mb import is_regulation_mb_item
+from app.data.items import is_regulation_mb_item
 from app.schema.common import Pokemon, Side, Slot
 
 _STAT_ALIASES: dict[str, str] = {

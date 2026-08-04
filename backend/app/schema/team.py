@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from app.data.regulation_mb import REGULATION_MB_ITEMS
+from app.data.items import REGULATION_MB_ITEMS
 from app.util.pokepaste_parser import parse
 
 
