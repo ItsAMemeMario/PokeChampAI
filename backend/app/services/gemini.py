@@ -96,8 +96,10 @@ class GeminiService:
             "No species names are visible — identify each Pokemon from its sprite and any "
             "visible type icons. Return exactly six species names in top-to-bottom order "
             "using standard English Showdown names. Use hyphenated form names when the "
-            "sprite is a regional or alternate form (e.g. 'Goodra-Hisui', 'Arcanine-Hisui', "
-            "'Lycanroc-Dusk', 'Urshifu-Rapid-Strike'). Do not use mega or G-Max names."
+            "sprite is a regional or alternate form (e.g. 'Goodra-Hisui', 'Lycanroc-Dusk'). "
+            "Do not use mega or G-Max names. "
+            # I kid you not this makes Gemini stop hallucinating on Floette-Eternal
+            "Be very accurate, no mistake can be afforded."
         )
         image_b64 = base64.b64encode(self._rgb_to_png_bytes(image)).decode("utf-8")
         output_text = await self._create_interaction(
