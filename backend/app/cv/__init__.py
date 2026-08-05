@@ -7,7 +7,7 @@ from app.cv.phase_detector import (
     detect_phase,
     has_battle_ui,
     is_fight_button_visible,
-    is_standby_screen_visible,
+    is_action_selection_standby_visible,
     is_team_preview,
     has_battle_ended,
 )
@@ -25,7 +25,7 @@ __all__ = [
     "has_battle_ui",
     "is_adb_connected",
     "is_fight_button_visible",
-    "is_standby_screen_visible",
+    "is_action_selection_standby_visible",
     "is_team_preview",
     "has_battle_ended",
     "load_regions",

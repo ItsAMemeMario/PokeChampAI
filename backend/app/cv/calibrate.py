@@ -43,7 +43,7 @@ from app.cv.regions import (
 
 REGION_COLORS: dict[str, tuple[int, int, int]] = {
     "team_preview_prompt": (0, 200, 255),
-    "team_selection_standby_text": (0, 200, 255),
+    "team_selection_standby": (0, 200, 255),
     "player_team_selection": (0, 200, 255),
     "opponent_team_preview": (0, 128, 255),
     "fight_button": (255, 0, 255),
@@ -56,7 +56,7 @@ REGION_COLORS: dict[str, tuple[int, int, int]] = {
     "opponent_slot_1_banner": (128, 128, 255),
     "opponent_slot_2_banner": (80, 80, 255),
     "battle_text": (255, 255, 0),
-    "standby_screen": (255, 180, 0),
+    "action_selection_standby": (255, 180, 0),
 }
 
 HELP_LINES = [

@@ -82,13 +82,13 @@
       300,
       108
     ],
-    "team_selection_standby_text": [
+    "team_selection_standby": [
       780,
       87,
       200,
       35
     ],
-    "standby_screen": [
+    "action_selection_standby": [
       710,
       250,
       180,

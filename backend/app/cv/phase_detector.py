@@ -16,7 +16,7 @@ from app.cv.regions import (
     RegionConfig,
     config_for_image,
     crop_region,
-    default_assets_dir,
+    cv_templates_dir,
     load_regions,
 )
 from app.services.session import BattlePhase
@@ -27,10 +27,9 @@ logger = logging.getLogger(__name__)
 _FIGHT_PURPLE_RATIO_MIN = 70.0
 _FIGHT_TEMPLATE_SCORE_MIN = 0.55
 _STANDBY_TEMPLATE_SCORE_MIN = 0.55
-_TEAM_PREVIEW_RED_RATIO_MIN = 55.0
 _BATTLE_UI_STD_MIN = 35.0
 _BATTLE_UI_MEAN_MIN = 25.0
-# Same near-gray + bright mask as HP slot cards (white "Communicating..." text).
+# Near-gray + bright mask for white UI prompt text (standby / team preview / selection).
 _STANDBY_CHROMA_MAX = 25
 _STANDBY_BRIGHT_MIN = 160
 
@@ -47,7 +46,6 @@ _BATTLE_UI_REGIONS = (
 )
 
 _BATTLE_END_TEXTS = ("forfeit", "forteit", "you defeated", "you lost to", "has ended")
-_TEAM_SELECTION_STANDBY_MARKERS = ("preparing",)
 
 
 @dataclass(frozen=True)
@@ -99,16 +97,34 @@ class PhaseTransition:
 @lru_cache(maxsize=1)
 def _fight_button_template() -> np.ndarray | None:
     """Load grayscale FIGHT button template from assets/cv."""
-    path = default_assets_dir() / "fight_button_template.png"
+    path = cv_templates_dir() / "fight_button.png"
     if not path.is_file():
         return None
     return np.asarray(Image.open(path).convert("L"), dtype=np.uint8)
 
 
 @lru_cache(maxsize=1)
-def _standby_screen_template() -> np.ndarray | None:
+def _action_selection_standby_template() -> np.ndarray | None:
     """Load near-gray/bright 'Communicating...' template from assets/cv."""
-    path = default_assets_dir() / "standby_screen_template.png"
+    path = cv_templates_dir() / "action_selection_standby.png"
+    if not path.is_file():
+        return None
+    return np.asarray(Image.open(path).convert("L"), dtype=np.uint8)
+
+
+@lru_cache(maxsize=1)
+def _team_preview_prompt_template() -> np.ndarray | None:
+    """Load near-gray/bright team-preview prompt template from assets/cv."""
+    path = cv_templates_dir() / "team_preview_prompt.png"
+    if not path.is_file():
+        return None
+    return np.asarray(Image.open(path).convert("L"), dtype=np.uint8)
+
+
+@lru_cache(maxsize=1)
+def _team_selection_standby_template() -> np.ndarray | None:
+    """Load near-gray/bright 'Preparing for Battle' template from assets/cv."""
+    path = cv_templates_dir() / "team_selection_standby.png"
     if not path.is_file():
         return None
     return np.asarray(Image.open(path).convert("L"), dtype=np.uint8)
@@ -117,13 +133,6 @@ def _standby_screen_template() -> np.ndarray | None:
 def _purple_ratio(hsv: np.ndarray) -> float:
     mask = cv2.inRange(hsv, np.array([100, 30, 60]), np.array([160, 255, 255]))
     return float(mask.mean())
-
-
-def _red_ratio(hsv: np.ndarray) -> float:
-    mask_low = cv2.inRange(hsv, np.array([0, 80, 80]), np.array([15, 255, 255]))
-    mask_high = cv2.inRange(hsv, np.array([165, 80, 80]), np.array([180, 255, 255]))
-    combined = cv2.bitwise_or(mask_low, mask_high)
-    return float(combined.mean())
 
 
 def _preprocess_near_gray_bright(crop_rgb: np.ndarray) -> np.ndarray:
@@ -137,6 +146,22 @@ def _preprocess_near_gray_bright(crop_rgb: np.ndarray) -> np.ndarray:
     masked = np.zeros(crop_rgb.shape[:2], dtype=np.uint8)
     masked[keep] = 255
     return masked
+
+
+def _matches_near_gray_template(
+    crop_rgb: np.ndarray,
+    template: np.ndarray | None,
+    *,
+    score_min: float = _STANDBY_TEMPLATE_SCORE_MIN,
+) -> bool:
+    """Segment white UI text and compare against a preprocessed template."""
+    if template is None:
+        return False
+    prepared = _preprocess_near_gray_bright(crop_rgb)
+    if prepared.shape != template.shape:
+        template = cv2.resize(template, (prepared.shape[1], prepared.shape[0]))
+    score = cv2.matchTemplate(prepared, template, cv2.TM_CCOEFF_NORMED)[0, 0]
+    return float(score) >= score_min
 
 
 def _preprocess_prompt_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
@@ -156,56 +181,27 @@ def _ocr_text(crop_rgb: np.ndarray) -> str:
     return " ".join(lines).strip()
 
 
-def _ocr_prompt_mentions_select_four(crop_rgb: np.ndarray) -> bool:
-    text = _ocr_text(crop_rgb)
-    return "select" in text and "4" in text
-
-
 def _ocr_prompt_indicates_end(crop_rgb: np.ndarray) -> bool:
     text = _ocr_text(crop_rgb).lower()
     return any(marker in text for marker in _BATTLE_END_TEXTS)
 
 
-def _ocr_prompt_indicates_team_selection_standby(crop_rgb: np.ndarray) -> bool:
-    text = _ocr_text(crop_rgb).lower()
-    return any(marker in text for marker in _TEAM_SELECTION_STANDBY_MARKERS)
-
-
 def is_team_preview(image: np.ndarray, config: RegionConfig) -> bool:
-    """Return True when the team preview screen is visible."""
-    prompt_crop = crop_region(image, config.get("team_preview_prompt"))
-    if _ocr_prompt_mentions_select_four(prompt_crop):
-        return True
-
-    preview_crop = crop_region(image, config.get("opponent_team_preview"))
-    hsv = cv2.cvtColor(preview_crop, cv2.COLOR_RGB2HSV)
-    return _red_ratio(hsv) >= _TEAM_PREVIEW_RED_RATIO_MIN
-
-def has_battle_ended(image: np.ndarray, config: RegionConfig) -> bool:
-    """Return True when the battle has ended."""
-    prompt_crop = crop_region(image, config.get("battle_text"))
-    return _ocr_prompt_indicates_end(prompt_crop)
-
-
-def is_standby_screen_visible(image: np.ndarray, config: RegionConfig) -> bool:
-    """Return True when the center standby screen shows 'Communicating...'."""
-    crop = crop_region(image, config.get("standby_screen"))
-    prepared = _preprocess_near_gray_bright(crop)
-
-    template = _standby_screen_template()
-    if template is None:
-        return False
-
-    if prepared.shape != template.shape:
-        template = cv2.resize(template, (prepared.shape[1], prepared.shape[0]))
-    score = cv2.matchTemplate(prepared, template, cv2.TM_CCOEFF_NORMED)[0, 0]
-    return float(score) >= _STANDBY_TEMPLATE_SCORE_MIN
+    """Return True when the team preview prompt text is visible."""
+    crop = crop_region(image, config.get("team_preview_prompt"))
+    return _matches_near_gray_template(crop, _team_preview_prompt_template())
 
 
 def is_team_selection_standby_visible(image: np.ndarray, config: RegionConfig) -> bool:
-    """Return True when center text shows 'Preparing for Battle' after both sides lock in."""
-    crop = crop_region(image, config.get("team_selection_standby_text"))
-    return _ocr_prompt_indicates_team_selection_standby(crop)
+    """Return True when center text shows 'Preparing for Battle' after the player locks in."""
+    crop = crop_region(image, config.get("team_selection_standby"))
+    return _matches_near_gray_template(crop, _team_selection_standby_template())
+
+
+def is_action_selection_standby_visible(image: np.ndarray, config: RegionConfig) -> bool:
+    """Return True when action-selection standby shows 'Communicating...'."""
+    crop = crop_region(image, config.get("action_selection_standby"))
+    return _matches_near_gray_template(crop, _action_selection_standby_template())
 
 
 def is_fight_button_visible(image: np.ndarray, config: RegionConfig) -> bool:
@@ -234,6 +230,12 @@ def has_battle_ui(image: np.ndarray, config: RegionConfig) -> bool:
     return False
 
 
+def has_battle_ended(image: np.ndarray, config: RegionConfig) -> bool:
+    """Return True when the battle has ended."""
+    prompt_crop = crop_region(image, config.get("battle_text"))
+    return _ocr_prompt_indicates_end(prompt_crop)
+
+
 def detect_phase(
     image: np.ndarray,
     config: RegionConfig,
@@ -245,18 +247,18 @@ def detect_phase(
     """
     Classify the current frame using priority-ordered checks.
 
-    1. team_selected — "Preparing for Battle" after brings are locked
-    2. team_preview — center prompt text or opponent preview column
-    3. battle_animation — standby screen ("Communicating...")
+    1. team_selected — near-gray template match for "Preparing for Battle"
+    2. team_preview — near-gray template match for team preview prompt
+    3. battle_animation — action_selection_standby ("Communicating...")
     4. action_selection — FIGHT button visible (entry signal; PhaseDetector latches sub-menus)
-    5. battle_animation — in-match without FIGHT or standby
+    5. battle_animation — in-match without FIGHT or action_selection_standby
     6. idle — fallback
     """
     if is_team_selection_standby_visible(image, config):
         return BattlePhase.TEAM_SELECTED
     if is_team_preview(image, config):
         return BattlePhase.TEAM_PREVIEW
-    if is_standby_screen_visible(image, config):
+    if is_action_selection_standby_visible(image, config):
         return BattlePhase.BATTLE_ANIMATION
     if is_fight_button_visible(image, config):
         return BattlePhase.ACTION_SELECTION
@@ -310,10 +312,10 @@ class PhaseDetector:
                 if is_team_preview(image, display_config):
                     current = BattlePhase.TEAM_PREVIEW
                 elif is_team_selection_standby_visible(image, display_config):
-                    # Missed early preview frames; both sides already standing by.
+                    # Missed early preview frames; player already locked in.
                     current = BattlePhase.TEAM_SELECTED
             case BattlePhase.TEAM_PREVIEW:
-                # Both sides locked in → "Preparing for Battle"
+                # Player locked in 4 → "Preparing for Battle" (opponent may still be choosing)
                 if is_team_selection_standby_visible(image, display_config):
                     current = BattlePhase.TEAM_SELECTED
                 # Fallback if preview UI disappears without the standby text (skipped frames)
@@ -332,7 +334,7 @@ class PhaseDetector:
                     current = BattlePhase.IDLE
             case BattlePhase.ACTION_SELECTION:
                 # Actions selected, animation begins
-                if is_standby_screen_visible(image, display_config):
+                if is_action_selection_standby_visible(image, display_config):
                     current = BattlePhase.BATTLE_ANIMATION
 
         self._phase = current

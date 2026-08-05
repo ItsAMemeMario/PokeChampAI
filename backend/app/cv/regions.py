@@ -24,6 +24,9 @@ def default_config_path() -> Path:
 def default_assets_dir() -> Path:
     return repo_root() / "assets" / "cv"
 
+def cv_templates_dir() -> Path:
+    return repo_root() / "assets" / "cv" / "templates"
+
 
 @dataclass(frozen=True)
 class RegionConfig:

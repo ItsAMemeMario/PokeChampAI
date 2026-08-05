@@ -10,7 +10,8 @@ from app.cv.phase_detector import (
     PhaseDetector,
     detect_phase,
     has_battle_ended,
-    is_standby_screen_visible,
+    is_action_selection_standby_visible,
+    is_team_preview,
     is_team_selection_standby_visible,
 )
 from app.cv.regions import config_for_image, default_assets_dir, load_regions
@@ -68,7 +69,23 @@ def test_detect_phase_on_reference_screenshots(asset: str, expected: BattlePhase
     assert phase == expected
 
 
-def test_is_team_selection_standby_on_reference(region_config) -> None:
+def test_is_team_preview_template_match(region_config) -> None:
+    """Near-gray template match detects team preview prompt without OCR."""
+    preview = _load_asset("team_preview.png")
+    preview_config = config_for_image(region_config, preview)
+    assert is_team_preview(preview, preview_config) is True
+
+    selection = _load_asset("team_selection.png")
+    selection_config = config_for_image(region_config, selection)
+    assert is_team_preview(selection, selection_config) is False
+
+    action = _load_asset("action_selection.png")
+    action_config = config_for_image(region_config, action)
+    assert is_team_preview(action, action_config) is False
+
+
+def test_is_team_selection_standby_template_match(region_config) -> None:
+    """Near-gray template match detects Preparing for Battle without OCR."""
     image = _load_asset("team_selection.png")
     display_config = config_for_image(region_config, image)
     assert is_team_selection_standby_visible(image, display_config) is True
@@ -77,20 +94,24 @@ def test_is_team_selection_standby_on_reference(region_config) -> None:
     preview_config = config_for_image(region_config, preview)
     assert is_team_selection_standby_visible(preview, preview_config) is False
 
+    action = _load_asset("action_selection.png")
+    action_config = config_for_image(region_config, action)
+    assert is_team_selection_standby_visible(action, action_config) is False
 
-def test_is_standby_screen_template_match(region_config) -> None:
+
+def test_is_action_selection_standby_template_match(region_config) -> None:
     """Near-gray template match detects Communicating... without OCR."""
     standby = _load_asset("standby.png")
     standby_config = config_for_image(region_config, standby)
-    assert is_standby_screen_visible(standby, standby_config) is True
+    assert is_action_selection_standby_visible(standby, standby_config) is True
 
     action = _load_asset("action_selection.png")
     action_config = config_for_image(region_config, action)
-    assert is_standby_screen_visible(action, action_config) is False
+    assert is_action_selection_standby_visible(action, action_config) is False
 
     battle = _load_asset("battle_text.png")
     battle_config = config_for_image(region_config, battle)
-    assert is_standby_screen_visible(battle, battle_config) is False
+    assert is_action_selection_standby_visible(battle, battle_config) is False
 
 
 def test_action_selection_poll_interval_is_five_fps() -> None:
