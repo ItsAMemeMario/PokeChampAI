@@ -8,7 +8,6 @@ from PIL import Image
 
 from app.cv.phase_detector import (
     PhaseDetector,
-    detect_phase,
     has_battle_ended,
     is_action_selection_standby_visible,
     is_team_preview,
@@ -37,36 +36,6 @@ def _advance_to_action_selection(detector: PhaseDetector) -> None:
 @pytest.fixture
 def region_config():
     return load_regions()
-
-
-@pytest.mark.parametrize(
-    ("asset", "expected"),
-    [
-        ("team_preview.png", BattlePhase.TEAM_PREVIEW),
-        ("team_selection.png", BattlePhase.TEAM_SELECTED),
-        ("action_selection.png", BattlePhase.ACTION_SELECTION),
-        ("battle_text.png", BattlePhase.BATTLE_ANIMATION),
-        ("player_slot_1_banner.png", BattlePhase.BATTLE_ANIMATION),
-        ("opponent_slot_1_banner.png", BattlePhase.BATTLE_ANIMATION),
-        ("player_slot_2_banner.png", BattlePhase.BATTLE_ANIMATION),
-        ("opponent_slot_2_banner.png", BattlePhase.BATTLE_ANIMATION),
-        ("standby.png", BattlePhase.BATTLE_ANIMATION),
-        ("battle_end.png", BattlePhase.BATTLE_ANIMATION),
-    ],
-)
-def test_detect_phase_on_reference_screenshots(asset: str, expected: BattlePhase, region_config) -> None:
-    """Stateless detect_phase helper (used for signal checks, not strict transitions)."""
-    image = _load_asset(asset)
-    display_config = config_for_image(region_config, image)
-    in_match = expected not in (BattlePhase.TEAM_PREVIEW, BattlePhase.TEAM_SELECTED)
-    saw_team_preview = expected == BattlePhase.BATTLE_ANIMATION
-    phase = detect_phase(
-        image,
-        display_config,
-        in_match=in_match,
-        saw_team_preview=saw_team_preview,
-    )
-    assert phase == expected
 
 
 def test_is_team_preview_template_match(region_config) -> None:

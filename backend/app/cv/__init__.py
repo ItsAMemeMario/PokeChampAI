@@ -4,8 +4,6 @@ from app.cv.adb_capture import capture_screenshot, is_adb_connected
 from app.cv.phase_detector import (
     PhaseDetector,
     PhaseTransition,
-    detect_phase,
-    has_battle_ui,
     is_fight_button_visible,
     is_action_selection_standby_visible,
     is_team_preview,
@@ -21,8 +19,6 @@ __all__ = [
     "config_for_image",
     "crop_region",
     "default_config_path",
-    "detect_phase",
-    "has_battle_ui",
     "is_adb_connected",
     "is_fight_button_visible",
     "is_action_selection_standby_visible",

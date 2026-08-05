@@ -27,23 +27,9 @@ logger = logging.getLogger(__name__)
 _FIGHT_PURPLE_RATIO_MIN = 70.0
 _FIGHT_TEMPLATE_SCORE_MIN = 0.55
 _STANDBY_TEMPLATE_SCORE_MIN = 0.55
-_BATTLE_UI_STD_MIN = 35.0
-_BATTLE_UI_MEAN_MIN = 25.0
 # Near-gray + bright mask for white UI prompt text (standby / team preview / selection).
 _STANDBY_CHROMA_MAX = 25
 _STANDBY_BRIGHT_MIN = 160
-
-_BATTLE_UI_REGIONS = (
-    "player_slot_1_card",
-    "player_slot_2_card",
-    "opponent_slot_1_card",
-    "opponent_slot_2_card",
-    "player_slot_1_banner",
-    "player_slot_2_banner",
-    "opponent_slot_1_banner",
-    "opponent_slot_2_banner",
-    "battle_text",
-)
 
 _BATTLE_END_TEXTS = ("forfeit", "forteit", "you defeated", "you lost to", "has ended")
 
@@ -220,55 +206,10 @@ def is_fight_button_visible(image: np.ndarray, config: RegionConfig) -> bool:
     return _purple_ratio(hsv) >= _FIGHT_PURPLE_RATIO_MIN
 
 
-def has_battle_ui(image: np.ndarray, config: RegionConfig) -> bool:
-    """Return True when in-battle HUD elements are visible in event regions."""
-    for name in _BATTLE_UI_REGIONS:
-        crop = crop_region(image, config.get(name))
-        gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
-        if float(gray.std()) >= _BATTLE_UI_STD_MIN and float(gray.mean()) >= _BATTLE_UI_MEAN_MIN:
-            return True
-    return False
-
-
 def has_battle_ended(image: np.ndarray, config: RegionConfig) -> bool:
     """Return True when the battle has ended."""
     prompt_crop = crop_region(image, config.get("battle_text"))
     return _ocr_prompt_indicates_end(prompt_crop)
-
-
-def detect_phase(
-    image: np.ndarray,
-    config: RegionConfig,
-    *,
-    in_match: bool = False,
-    saw_team_preview: bool = False,
-    current_phase: BattlePhase = BattlePhase.IDLE,
-) -> BattlePhase:
-    """
-    Classify the current frame using priority-ordered checks.
-
-    1. team_selected — near-gray template match for "Preparing for Battle"
-    2. team_preview — near-gray template match for team preview prompt
-    3. battle_animation — action_selection_standby ("Communicating...")
-    4. action_selection — FIGHT button visible (entry signal; PhaseDetector latches sub-menus)
-    5. battle_animation — in-match without FIGHT or action_selection_standby
-    6. idle — fallback
-    """
-    if is_team_selection_standby_visible(image, config):
-        return BattlePhase.TEAM_SELECTED
-    if is_team_preview(image, config):
-        return BattlePhase.TEAM_PREVIEW
-    if is_action_selection_standby_visible(image, config):
-        return BattlePhase.BATTLE_ANIMATION
-    if is_fight_button_visible(image, config):
-        return BattlePhase.ACTION_SELECTION
-    if current_phase == BattlePhase.ACTION_SELECTION:
-        return BattlePhase.ACTION_SELECTION
-    if current_phase == BattlePhase.TEAM_SELECTED:
-        return BattlePhase.TEAM_SELECTED
-    if in_match or saw_team_preview or has_battle_ui(image, config):
-        return BattlePhase.BATTLE_ANIMATION
-    return BattlePhase.IDLE
 
 
 class PhaseDetector:
@@ -283,8 +224,6 @@ class PhaseDetector:
             self._config = load_regions(config)
 
         self._phase = BattlePhase.IDLE
-        self._in_match = False
-        self._saw_team_preview = False
 
     @property
     def phase(self) -> BattlePhase:
@@ -292,8 +231,6 @@ class PhaseDetector:
 
     def reset(self) -> None:
         self._phase = BattlePhase.IDLE
-        self._in_match = False
-        self._saw_team_preview = False
 
     def detect(self, image: np.ndarray) -> BattlePhase:
         """Update internal state and return the detected phase."""
