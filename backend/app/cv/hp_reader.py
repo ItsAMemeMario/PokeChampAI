@@ -16,6 +16,7 @@ from app.schema.battle_log import HPChangeEvent
 from app.schema.common import Pokemon, Side, Slot
 from app.schema.gamestate import GameState
 from app.util.legal_snap import snap_to_legal
+from backend.app.data import REGULATION_MB_SPECIES
 
 logger = logging.getLogger(__name__)
 
@@ -321,9 +322,9 @@ def _snap_slot_species(
     """Snap OCR species to the side's known list (bring-4 / opponent-6)."""
     known: Iterable[str]
     if side == "player":
-        known = player_species or ()
+        known = player_species or REGULATION_MB_SPECIES
     else:
-        known = opponent_species or ()
+        known = opponent_species or REGULATION_MB_SPECIES
     return snap_to_legal(species, known) or species
 
 

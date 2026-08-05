@@ -183,6 +183,7 @@ def test_event_ocr_on_reference_screenshots(region_config) -> None:
 
     for asset, (expected_type, expected_side, expected_slot) in expectations.items():
         events = engine.process_frame(_load_asset(asset), region_config)
+        print(events)
         engine.reset()
         assert events, f"Expected events from {asset}"
         match = next((event for event in events if event.type == expected_type), None)

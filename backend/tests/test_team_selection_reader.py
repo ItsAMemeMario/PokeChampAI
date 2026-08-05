@@ -38,14 +38,53 @@ def player_team() -> PlayerTeam:
     return PlayerTeam(
         pokemon=[
             PlayerPokemon(
-                species=name,
-                item="Sitrus Berry",
-                ability="Ability",
-                evs={"hp": 0},
+                species="Staraptor",
+                item="Staraptite",
+                ability="Intimidate",
+                evs={"hp": 2, "atk": 32, "spe": 32},
+                nature="Jolly",
+                moves=["Close Combat", "Brave Bird", "Roost", "Protect"],
+            ),
+            PlayerPokemon(
+                species="Grimmsnarl",
+                item="Wide Lens",
+                ability="Prankster",
+                evs={"hp": 29, "def": 22, "spd": 15},
+                nature="Careful",
+                moves=["Spirit Break", "Swagger", "Scary Face", "Parting Shot"],
+            ),
+            PlayerPokemon(
+                species="Charizard",
+                item="Charizardite Y",
+                ability="Blaze",
+                evs={"hp": 8, "def": 17, "spa": 20, "spe": 21},
+                nature="Modest",
+                moves=["Heat Wave", "Solar Beam", "Weather Ball", "Protect"],
+            ),
+            PlayerPokemon(
+                species="Sneasler",
+                item="Persim Berry",
+                ability="Unburden",
+                evs={"hp": 2, "atk": 32, "spe": 32},
                 nature="Adamant",
-                moves=["Move1", "Move2", "Move3", "Move4"],
+                moves=["Close Combat", "Dire Claw", "Rock Tomb", "Throat Chop"],
+            ),
+            PlayerPokemon(
+                species="Garchomp",
+                item="Lum Berry",
+                ability="Rough Skin",
+                evs={"hp": 2, "atk": 32, "spe": 32},
+                nature="Jolly",
+                moves=["Dragon Claw", "Earthquake", "Rock Slide", "Protect"],
+            ),
+            PlayerPokemon(
+                species="Sinistcha",
+                item="Sitrus Berry",
+                ability="Hospitality",
+                evs={"hp": 32, "def": 2, "spd": 32},
+                nature="Bold",
+                moves=["Matcha Gotcha", "Strength Sap", "Life Dew", "Rage Powder"],
             )
-            for name in species
         ]
     )
 

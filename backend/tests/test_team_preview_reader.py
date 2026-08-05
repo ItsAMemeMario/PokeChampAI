@@ -90,14 +90,53 @@ async def test_cv_team_preview_pipeline_stores_suggestion() -> None:
     store.player_team = PlayerTeam(
         pokemon=[
             PlayerPokemon(
-                species=f"Mon{i}",
+                species="Staraptor",
+                item="Staraptite",
+                ability="Intimidate",
+                evs={"hp": 2, "atk": 32, "spe": 32},
+                nature="Jolly",
+                moves=["Close Combat", "Brave Bird", "Roost", "Protect"],
+            ),
+            PlayerPokemon(
+                species="Grimmsnarl",
+                item="Wide Lens",
+                ability="Prankster",
+                evs={"hp": 29, "def": 22, "spd": 15},
+                nature="Careful",
+                moves=["Spirit Break", "Swagger", "Scary Face", "Parting Shot"],
+            ),
+            PlayerPokemon(
+                species="Charizard",
+                item="Charizardite Y",
+                ability="Blaze",
+                evs={"hp": 8, "def": 17, "spa": 20, "spe": 21},
+                nature="Modest",
+                moves=["Heat Wave", "Solar Beam", "Weather Ball", "Protect"],
+            ),
+            PlayerPokemon(
+                species="Sneasler",
+                item="Persim Berry",
+                ability="Unburden",
+                evs={"hp": 2, "atk": 32, "spe": 32},
+                nature="Adamant",
+                moves=["Close Combat", "Dire Claw", "Rock Tomb", "Throat Chop"],
+            ),
+            PlayerPokemon(
+                species="Garchomp",
+                item="Lum Berry",
+                ability="Rough Skin",
+                evs={"hp": 2, "atk": 32, "spe": 32},
+                nature="Jolly",
+                moves=["Dragon Claw", "Earthquake", "Rock Slide", "Protect"],
+            ),
+            PlayerPokemon(
+                species="Sinistcha",
                 item="Sitrus Berry",
-                ability="Ability",
-                evs={"hp": 0},
-                nature="Timid",
-                moves=["Move1", "Move2", "Move3", "Move4"],
+                ability="Hospitality",
+                evs={"hp": 32, "def": 2, "spd": 32},
+                nature="Bold",
+                moves=["Matcha Gotcha", "Strength Sap", "Life Dew", "Rage Powder"],
             )
-            for i in range(6)
         ]
     )
 
@@ -116,8 +155,8 @@ async def test_cv_team_preview_pipeline_stores_suggestion() -> None:
         return_value=TeamPreviewSuggestion(
             predicted_opponent_bring=["Blaziken", "Scizor", "Sinistcha", "Milotic"],
             predicted_opponent_lead_pair=("Blaziken", "Scizor"),
-            suggested_player_bring=["Mon0", "Mon1", "Mon2", "Mon3"],
-            suggested_player_lead_pair=("Mon0", "Mon1"),
+            suggested_player_bring=["Staraptor", "Grimmsnarl", "Sneasler", "Garchomp"],
+            suggested_player_lead_pair=("Staraptor", "Grimmsnarl"),
             reasoning="Test reasoning",
         )
     )
@@ -134,7 +173,7 @@ async def test_cv_team_preview_pipeline_stores_suggestion() -> None:
 
     assert store.opponent_team_species == opponent_species
     assert store.team_preview_suggestion is not None
-    assert store.team_preview_suggestion.suggested_player_lead_pair == ("Mon0", "Mon1")
+    assert store.team_preview_suggestion.suggested_player_lead_pair == ("Staraptor", "Grimmsnarl")
     assert store.gemini_interaction_id == "int_preview"
     mock_gemini.suggest_team_preview.assert_awaited_once()
-    mock_service_cls.assert_called_with(interaction_id=None)
+    mock_service_cls.assert_called_with()
