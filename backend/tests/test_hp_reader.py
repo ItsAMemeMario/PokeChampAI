@@ -109,8 +109,12 @@ def test_parse_player_numeric_hp() -> None:
     )
 
 
-def test_parse_slot_card_snaps_species_to_legal_and_known() -> None:
-    typo = parse_slot_card_text("Garchmp 100 / 100", "player")
+def test_parse_slot_card_snaps_species_to_known() -> None:
+    typo = parse_slot_card_text(
+        "Garchmp 100 / 100",
+        "player",
+        player_species=["Garchomp", "Sinistcha", "Staraptor", "Incineroar"],
+    )
     assert typo is not None
     assert typo.species == "Garchomp"
 

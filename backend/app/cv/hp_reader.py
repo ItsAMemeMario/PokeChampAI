@@ -12,11 +12,10 @@ import numpy as np
 
 from app.cv.event_ocr import _ocr_text
 from app.cv.regions import RegionConfig, config_for_image, crop_region
-from app.data.species import REGULATION_MB_SPECIES
 from app.schema.battle_log import HPChangeEvent
 from app.schema.common import Pokemon, Side, Slot
 from app.schema.gamestate import GameState
-from app.util.legal_snap import prefer_known_species
+from app.util.legal_snap import snap_to_legal
 
 logger = logging.getLogger(__name__)
 
@@ -319,13 +318,13 @@ def _snap_slot_species(
     player_species: Iterable[str] | None = None,
     opponent_species: Iterable[str] | None = None,
 ) -> str:
-    """Snap OCR species to the side's known list, then the legal pool."""
+    """Snap OCR species to the side's known list (bring-4 / opponent-6)."""
     known: Iterable[str]
     if side == "player":
         known = player_species or ()
     else:
         known = opponent_species or ()
-    return prefer_known_species(species, known, REGULATION_MB_SPECIES)
+    return snap_to_legal(species, known) or species
 
 
 def _normalize_slot_ocr_text(text: str, side: Side) -> str:

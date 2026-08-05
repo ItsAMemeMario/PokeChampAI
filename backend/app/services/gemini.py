@@ -18,7 +18,7 @@ from app.schema.gamestate import GameState
 from app.schema.suggestions import Move, Switch, TeamPreviewSuggestion, TurnSuggestion
 from app.schema.team import OpponentTeamPreview, PlayerTeam
 from app.data.species import REGULATION_MB_SPECIES
-from app.util.legal_snap import prefer_known_species
+from app.util.legal_snap import snap_to_legal
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class GeminiService:
         )
         parsed = OpponentTeamPreview.model_validate_json(output_text)
         return [
-            prefer_known_species(name, (), REGULATION_MB_SPECIES)
+            snap_to_legal(name, REGULATION_MB_SPECIES) or name.strip()
             for name in parsed.species
         ]
 

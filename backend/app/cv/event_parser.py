@@ -27,9 +27,8 @@ from app.schema.battle_log import (
 from app.data.abilities import REGULATION_MB_ABILITIES
 from app.data.items import REGULATION_MB_ITEMS, is_regulation_mb_item
 from app.data.moves import REGULATION_MB_MOVES
-from app.data.species import REGULATION_MB_SPECIES
 from app.schema.common import Pokemon, Side, Slot
-from app.util.legal_snap import prefer_known_species, snap_to_legal
+from app.util.legal_snap import snap_to_legal
 
 _PLAYER_SPECIES: ContextVar[tuple[str, ...]] = ContextVar(
     "event_parser_player_species",
@@ -230,7 +229,7 @@ def _pokemon(
         player_species=player_species,
         opponent_species=opponent_species,
     )
-    snapped = prefer_known_species(cleaned, known, REGULATION_MB_SPECIES)
+    snapped = snap_to_legal(cleaned, known) or cleaned
     return Pokemon(species=snapped, side=side, slot=slot)
 
 

@@ -10,7 +10,7 @@ from app.data.abilities import REGULATION_MB_ABILITIES
 from app.data.moves import ALL_ADJACENT_MOVES, REGULATION_MB_MOVES, spread_kind
 from app.data.species import REGULATION_MB_SPECIES
 from app.schema.team import PlayerPokemon, parse_team
-from app.util.legal_snap import prefer_known_species, snap_to_legal
+from app.util.legal_snap import snap_to_legal
 
 
 def test_species_includes_alternate_forms_not_megas() -> None:
@@ -39,10 +39,12 @@ def test_snap_to_legal_typo() -> None:
     assert snap_to_legal("earthquak", REGULATION_MB_MOVES) == "Earthquake"
 
 
-def test_prefer_known_species_form_resolution() -> None:
-    known = ["Arcanine-Hisui", "Incineroar"]
-    assert prefer_known_species("Arcanine", known, REGULATION_MB_SPECIES) == "Arcanine-Hisui"
-    assert prefer_known_species("Incineroar", known, REGULATION_MB_SPECIES) == "Incineroar"
+def test_snap_to_legal_known_list_resolves_forms() -> None:
+    # Species clause: only one Arcanine* can be known; OCR never has form suffixes.
+    known = ["Arcanine-Hisui", "Incineroar", "Sinistcha", "Staraptor"]
+    assert snap_to_legal("Arcanine", known) == "Arcanine-Hisui"
+    assert snap_to_legal("Incineroar", known) == "Incineroar"
+    assert snap_to_legal("Garchmp", ["Garchomp", "Scizor", "Hatterene", "Milotic"]) == "Garchomp"
 
 
 def test_parse_battle_text_snaps_species_and_move() -> None:
