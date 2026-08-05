@@ -109,6 +109,29 @@ def test_parse_player_numeric_hp() -> None:
     )
 
 
+def test_parse_slot_card_snaps_species_to_legal_and_known() -> None:
+    typo = parse_slot_card_text("Garchmp 100 / 100", "player")
+    assert typo is not None
+    assert typo.species == "Garchomp"
+
+    form = parse_slot_card_text(
+        "Arcanine 80 / 100",
+        "player",
+        player_species=["Arcanine-Hisui", "Sinistcha", "Staraptor", "Garchomp"],
+    )
+    assert form is not None
+    assert form.species == "Arcanine-Hisui"
+
+    opponent = parse_slot_card_text(
+        "Arcanine 47%",
+        "opponent",
+        player_species=["Arcanine-Hisui", "Sinistcha", "Staraptor", "Garchomp"],
+        opponent_species=["Arcanine", "Scizor", "Hatterene", "Milotic", "Blaziken", "Amoonguss"],
+    )
+    assert opponent is not None
+    assert opponent.species == "Arcanine"
+
+
 def test_parse_opponent_percent_hp() -> None:
     reading = parse_slot_card_text("Hatterene 47%", "opponent")
     assert reading is not None

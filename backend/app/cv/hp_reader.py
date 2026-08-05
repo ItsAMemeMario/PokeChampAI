@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 import cv2
@@ -11,9 +12,11 @@ import numpy as np
 
 from app.cv.event_ocr import _ocr_text
 from app.cv.regions import RegionConfig, config_for_image, crop_region
+from app.data.species import REGULATION_MB_SPECIES
 from app.schema.battle_log import HPChangeEvent
 from app.schema.common import Pokemon, Side, Slot
 from app.schema.gamestate import GameState
+from app.util.legal_snap import prefer_known_species
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,9 @@ def read_slot_card(
     image: np.ndarray,
     config: RegionConfig,
     region_name: str,
+    *,
+    player_species: Iterable[str] | None = None,
+    opponent_species: Iterable[str] | None = None,
 ) -> SlotCardRead | None:
     """OCR a single calibrated slot-card region into a structured reading."""
     side, _slot = _side_slot_for_region(region_name)
@@ -61,7 +67,12 @@ def read_slot_card(
     crop = crop_region(image, display_config.get(region_name))
     if not _region_has_content(crop):
         return None
-    return parse_slot_card_text(_ocr_slot_card_text(crop), side)
+    return parse_slot_card_text(
+        _ocr_slot_card_text(crop),
+        side,
+        player_species=player_species,
+        opponent_species=opponent_species,
+    )
 
 
 def _side_slot_for_region(region_name: str) -> tuple[Side, Slot]:
@@ -106,6 +117,9 @@ class HPReader:
         image: np.ndarray,
         config: RegionConfig,
         game_state: GameState | None,
+        *,
+        player_species: Iterable[str] | None = None,
+        opponent_species: Iterable[str] | None = None,
     ) -> list[HPChangeEvent]:
         """Mode 1: poll visible slot cards; emit after a 2-frame stable read."""
         display_config = config_for_image(config, image)
@@ -119,7 +133,12 @@ class HPReader:
                 tracker.reset()
                 continue
 
-            reading = parse_slot_card_text(_ocr_slot_card_text(crop), side)
+            reading = parse_slot_card_text(
+                _ocr_slot_card_text(crop),
+                side,
+                player_species=player_species,
+                opponent_species=opponent_species,
+            )
             if reading is None:
                 continue
 
@@ -141,6 +160,9 @@ class HPReader:
         image: np.ndarray,
         config: RegionConfig,
         game_state: GameState | None,
+        *,
+        player_species: Iterable[str] | None = None,
+        opponent_species: Iterable[str] | None = None,
     ) -> list[HPChangeEvent]:
         """Mode 2: authoritative 4-slot read at turn boundary (no stability gate)."""
         display_config = config_for_image(config, image)
@@ -151,7 +173,12 @@ class HPReader:
             if not _region_has_content(crop):
                 continue
 
-            reading = parse_slot_card_text(_ocr_slot_card_text(crop), side)
+            reading = parse_slot_card_text(
+                _ocr_slot_card_text(crop),
+                side,
+                player_species=player_species,
+                opponent_species=opponent_species,
+            )
             if reading is None:
                 continue
 
@@ -233,7 +260,13 @@ class HPReader:
         return event
 
 
-def parse_slot_card_text(text: str, side: Side) -> SlotCardRead | None:
+def parse_slot_card_text(
+    text: str,
+    side: Side,
+    *,
+    player_species: Iterable[str] | None = None,
+    opponent_species: Iterable[str] | None = None,
+) -> SlotCardRead | None:
     """Parse OCR text from a player (current/max) or opponent (%) slot card."""
     cleaned = _normalize_slot_ocr_text(text, side)
     if not cleaned:
@@ -252,6 +285,12 @@ def parse_slot_card_text(text: str, side: Side) -> SlotCardRead | None:
         species = _extract_species(cleaned, match.start(), match.end())
         if not species:
             return None
+        species = _snap_slot_species(
+            species,
+            side,
+            player_species=player_species,
+            opponent_species=opponent_species,
+        )
         # Canonical raw_text: UI usually shows "162 / 162" with spaces.
         raw_text = f"{species} {current} / {maximum}"
     else:
@@ -262,9 +301,31 @@ def parse_slot_card_text(text: str, side: Side) -> SlotCardRead | None:
         species = _extract_species(cleaned, match.start(), match.end())
         if not species:
             return None
+        species = _snap_slot_species(
+            species,
+            side,
+            player_species=player_species,
+            opponent_species=opponent_species,
+        )
         raw_text = f"{species} {hp_pct}%"
 
     return SlotCardRead(species=species, hp_pct=hp_pct, raw_text=raw_text)
+
+
+def _snap_slot_species(
+    species: str,
+    side: Side,
+    *,
+    player_species: Iterable[str] | None = None,
+    opponent_species: Iterable[str] | None = None,
+) -> str:
+    """Snap OCR species to the side's known list, then the legal pool."""
+    known: Iterable[str]
+    if side == "player":
+        known = player_species or ()
+    else:
+        known = opponent_species or ()
+    return prefer_known_species(species, known, REGULATION_MB_SPECIES)
 
 
 def _normalize_slot_ocr_text(text: str, side: Side) -> str:

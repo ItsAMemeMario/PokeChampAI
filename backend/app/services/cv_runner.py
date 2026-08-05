@@ -109,7 +109,13 @@ def _process_hp_animation_frame(
     config,
 ) -> None:
     """Poll slot cards at animation FPS; append stable HPChangeEvents."""
-    for event in hp_reader.process_animation_frame(frame, config, store.game_state):
+    for event in hp_reader.process_animation_frame(
+        frame,
+        config,
+        store.game_state,
+        player_species=store.player_selected_species,
+        opponent_species=store.opponent_team_species,
+    ):
         store.append_battle_log(event)
         logger.info(
             "HP change: %s slot %s %+d%% — %r",
@@ -128,7 +134,11 @@ def _process_hp_action_selection_snapshot(
 ) -> None:
     """Authoritative 4-slot HP snapshot on action_selection entry."""
     for event in hp_reader.read_action_selection_snapshot(
-        frame, config, store.game_state
+        frame,
+        config,
+        store.game_state,
+        player_species=store.player_selected_species,
+        opponent_species=store.opponent_team_species,
     ):
         store.append_battle_log(event)
         logger.info(
