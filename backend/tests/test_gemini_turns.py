@@ -41,7 +41,7 @@ def _sample_team() -> PlayerTeam:
             ),
             PlayerPokemon(
                 species="Staraptor",
-                item="Staraptorite",
+                item="Staraptite",
                 ability="Intimidate",
                 evs={"atk": 252},
                 nature="Jolly",

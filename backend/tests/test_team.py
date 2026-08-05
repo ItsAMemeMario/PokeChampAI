@@ -18,7 +18,7 @@ Bold Nature
 - Rage Powder
 - Protect
 
-Staraptor @ Staraptorite
+Staraptor @ Staraptite
 Ability: Intimidate
 Level: 50
 EVs: 252 Atk / 4 SpD / 252 Spe
@@ -136,7 +136,7 @@ def test_parse_team_accepts_legal_regulation_mb_items() -> None:
     team = parse_team(_LEGAL_PASTE)
     assert len(team.pokemon) == 6
     assert team.pokemon[0].item == "Sitrus Berry"
-    assert team.pokemon[1].item == "Staraptorite"
+    assert team.pokemon[1].item == "Staraptite"
 
 
 def test_parse_team_rejects_illegal_item() -> None:

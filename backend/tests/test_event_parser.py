@@ -73,7 +73,7 @@ def test_is_known_item_checks_regulation_mb_list() -> None:
     assert is_known_item("Intimidate") is False
     assert is_known_item("Assault Vest") is False
     assert is_known_item("Rocky Helmet") is False
-    assert is_known_item("Staraptorite") is True
+    assert is_known_item("Staraptite") is True
 
 
 def test_parse_battle_text_mega_evolution() -> None:

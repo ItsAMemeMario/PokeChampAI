@@ -564,7 +564,7 @@ Bold Nature
 - Rage Powder
 - Protect
 
-Staraptor @ Staraptorite
+Staraptor @ Staraptite
 Ability: Intimidate
 Level: 50
 EVs: 252 Atk / 4 SpD / 252 Spe
