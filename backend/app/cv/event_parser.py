@@ -679,7 +679,7 @@ def parse_battle_text(
     try:
         events: list[BattleLogEvent] = []
 
-        for multi_parser in enumerate((_parse_stat_changes, _parse_switch)):
+        for multi_parser in (_parse_stat_changes, _parse_switch):
             events.extend(multi_parser(normalized))
 
         for single_parser in (
