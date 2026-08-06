@@ -84,8 +84,10 @@ class SessionStore:
 
         ``TurnStartEvent`` opens ``battle_logs[turn_number]`` as a new turn
         list (starting with that event). All other events append to the
-        active turn. After append: completer patches partial fields, then the
-        reducer applies the (possibly patched) event to ``game_state``.
+        active turn. Events that arrive before the first ``TurnStartEvent``
+        (opening lead switch-ins during battle animation) append to
+        ``battle_logs[0]``. After append: completer patches partial fields,
+        then the reducer applies the (possibly patched) event to ``game_state``.
         Returns ``(turn, index)`` pairs patched by the completer.
         """
         logger.info("Appending battle log event: %s", event)
@@ -100,17 +102,19 @@ class SessionStore:
         else:
             turn = self.turn_number
             if turn < 1:
-                raise ValueError(
-                    "Cannot append battle log event before a TurnStartEvent "
-                    f"(turn_number={self.turn_number})"
-                )
-            while len(self.battle_logs) <= turn:
-                self.battle_logs.append([])
-            if not self.battle_logs[turn]:
-                raise ValueError(
-                    f"Turn {turn} is not open; append a TurnStartEvent first"
-                )
-            self.battle_logs[turn].append(event)
+                # Pre-turn / lead-in bucket (before first action_selection).
+                turn = 0
+                while len(self.battle_logs) <= 0:
+                    self.battle_logs.append([])
+                self.battle_logs[0].append(event)
+            else:
+                while len(self.battle_logs) <= turn:
+                    self.battle_logs.append([])
+                if not self.battle_logs[turn]:
+                    raise ValueError(
+                        f"Turn {turn} is not open; append a TurnStartEvent first"
+                    )
+                self.battle_logs[turn].append(event)
 
         # Local imports avoid circular dependencies at module load time.
         from app.services.battle_log_completer import complete_battle_logs

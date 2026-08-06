@@ -540,6 +540,38 @@ def test_append_battle_log_reduces_game_state() -> None:
     assert len(store.battle_logs[1]) == 2
 
 
+def test_append_lead_in_events_before_turn_start() -> None:
+    """Opening animation switch-ins land in battle_logs[0] before TurnStartEvent."""
+    store = SessionStore()
+    store.begin_battle()
+    assert store.turn_number == 0
+
+    store.append_battle_log(
+        SwitchInEvent(
+            raw_text="sent out Musharna and Dragapult!",
+            pokemon=_poke("Musharna", side="opponent", slot=1),
+        )
+    )
+    store.append_battle_log(
+        SwitchInEvent(
+            raw_text="sent out Musharna and Dragapult!",
+            pokemon=_poke("Dragapult", side="opponent", slot=2),
+        )
+    )
+
+    assert store.turn_number == 0
+    assert len(store.battle_logs[0]) == 2
+    assert store.battle_logs[0][0].type == "switch_in"
+    assert store.game_state is not None
+    assert store.game_state.opponent.slot_1 is not None
+    assert store.game_state.opponent.slot_1.species == "Musharna"
+
+    store.append_battle_log(TurnStartEvent(raw_text="Turn 1", turn_number=1))
+    assert store.turn_number == 1
+    assert len(store.battle_logs[0]) == 2
+    assert store.battle_logs[1][0].type == "turn_start"
+
+
 def test_append_turn_start_updates_store_turn_number() -> None:
     store = SessionStore()
     store.game_state = empty_game_state(turn_number=0)

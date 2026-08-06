@@ -40,9 +40,12 @@ def flatten_battle_logs(
     *,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
-    """Return recent battle log events newest-last, capped at ``limit``."""
+    """Return recent battle log events newest-last, capped at ``limit``.
+
+    Includes pre-turn lead-in events from ``battle_logs[0]``.
+    """
     events: list[BattleLogEvent] = []
-    for turn_logs in store.battle_logs[1:]:
+    for turn_logs in store.battle_logs:
         events.extend(turn_logs)
     if limit > 0 and len(events) > limit:
         events = events[-limit:]

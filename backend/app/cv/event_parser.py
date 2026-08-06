@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from contextvars import ContextVar
@@ -697,9 +696,11 @@ def parse_battle_text(
             event = single_parser(normalized)
             if event is not None:
                 events.append(event)
-        
-        logger.info("Parsing complete, added events: %s", json.dumps(events, indent=2))
-        
+
+        logger.info(
+            "Parsing complete, added events: %s",
+            [getattr(e, "type", type(e).__name__) for e in events],
+        )
         return _dedupe_events(events)
     finally:
         if player_token is not None:
@@ -729,5 +730,4 @@ def _dedupe_events(events: Iterable[BattleLogEvent]) -> list[BattleLogEvent]:
             continue
         seen.add(key)
         unique.append(event)
-    logger.info("Deduped events: %s", json.dumps(unique, indent=2))
     return unique
