@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import logging
 import os
+import struct
 import subprocess
-from io import BytesIO
 
 import numpy as np
-from PIL import Image
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DEVICE = "127.0.0.1:5555"
 ADB_TIMEOUT_SEC = 15
+
+# Android PixelFormat values commonly emitted by `screencap` (no -p).
+_PIXEL_FORMAT_RGBA_8888 = 1
+_PIXEL_FORMAT_RGBX_8888 = 2
+_PIXEL_FORMAT_BGRA_8888 = 5
+_SUPPORTED_4BPP_FORMATS = {
+    _PIXEL_FORMAT_RGBA_8888,
+    _PIXEL_FORMAT_RGBX_8888,
+    _PIXEL_FORMAT_BGRA_8888,
+}
 
 
 def get_adb_device() -> str:
@@ -49,16 +58,86 @@ def is_adb_connected(device: str | None = None) -> bool:
     return False
 
 
+def parse_raw_screencap(data: bytes) -> np.ndarray:
+    """
+    Parse Android raw `screencap` output into an RGB uint8 array.
+
+    Header is little-endian ``width``, ``height``, ``format`` (12 bytes).
+    Newer Android builds append a 4-byte color-space field (16-byte header).
+    Pixel payload is RGBA/RGBX/BGRA (4 bytes per pixel); alpha/X is dropped.
+    When row stride exceeds width, only the active width columns are kept.
+    """
+    if len(data) < 12:
+        raise RuntimeError(
+            f"ADB screencap output too short for header ({len(data)} bytes)"
+        )
+
+    width, height, pixel_format = struct.unpack_from("<III", data, 0)
+    if width == 0 or height == 0:
+        raise RuntimeError(f"Invalid screencap dimensions: {width}x{height}")
+
+    if pixel_format not in _SUPPORTED_4BPP_FORMATS:
+        raise RuntimeError(
+            f"Unsupported screencap pixel format {pixel_format} "
+            f"(expected RGBA/RGBX/BGRA 8888)"
+        )
+
+    bytes_per_pixel = 4
+    expected_tight = width * height * bytes_per_pixel
+
+    header_size: int | None = None
+    payload: bytes | None = None
+    for candidate in (12, 16):
+        if len(data) < candidate:
+            continue
+        body = data[candidate:]
+        if len(body) < expected_tight:
+            continue
+        if len(body) == expected_tight:
+            header_size = candidate
+            payload = body
+            break
+        # Strided buffer: row bytes * height == payload length, stride >= width.
+        if height > 0 and len(body) % height == 0:
+            stride_bytes = len(body) // height
+            if stride_bytes >= width * bytes_per_pixel and stride_bytes % bytes_per_pixel == 0:
+                header_size = candidate
+                payload = body
+                break
+
+    if header_size is None or payload is None:
+        raise RuntimeError(
+            f"ADB screencap payload size mismatch: got {len(data)} bytes for "
+            f"{width}x{height} format={pixel_format} (expected {expected_tight} "
+            f"pixels after 12- or 16-byte header)"
+        )
+
+    if len(payload) == expected_tight:
+        rgba = np.frombuffer(payload, dtype=np.uint8).reshape((height, width, 4))
+    else:
+        stride_bytes = len(payload) // height
+        rows = np.frombuffer(payload, dtype=np.uint8).reshape((height, stride_bytes))
+        rgba = rows[:, : width * bytes_per_pixel].reshape((height, width, 4))
+
+    if pixel_format == _PIXEL_FORMAT_BGRA_8888:
+        rgb = rgba[:, :, [2, 1, 0]]
+    else:
+        rgb = rgba[:, :, :3]
+
+    # frombuffer views are read-only; callers may mutate the frame.
+    return np.ascontiguousarray(rgb, dtype=np.uint8)
+
+
 def capture_screenshot(device: str | None = None) -> np.ndarray:
     """
-    Capture the emulator screen via `adb exec-out screencap -p`.
+    Capture the emulator screen via `adb exec-out screencap` (raw RGBA dump).
 
     Returns an RGB uint8 numpy array with shape (height, width, 3).
     Raises RuntimeError when ADB is unavailable or capture fails.
     """
     logger.info("Beginning ADB screencap")
     device = device or get_adb_device()
-    cmd = [*_adb_base_cmd(device), "exec-out", "screencap", "-p"]
+    cmd = [*_adb_base_cmd(device), "exec-out", "screencap"]
     try:
         result = subprocess.run(
             cmd,
@@ -81,10 +160,11 @@ def capture_screenshot(device: str | None = None) -> np.ndarray:
         raise RuntimeError("ADB screencap returned empty output")
 
     try:
-        image = Image.open(BytesIO(result.stdout))
-        rgb = image.convert("RGB")
+        rgb = parse_raw_screencap(result.stdout)
+    except RuntimeError:
+        raise
     except Exception as exc:
-        raise RuntimeError("Failed to decode ADB screencap PNG") from exc
+        raise RuntimeError("Failed to decode ADB raw screencap") from exc
 
     logger.info("Captured screenshot")
-    return np.asarray(rgb, dtype=np.uint8)
+    return rgb
