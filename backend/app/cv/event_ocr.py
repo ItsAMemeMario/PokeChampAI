@@ -60,8 +60,10 @@ class EventOcrEngine:
         events: list[BattleLogEvent] = []
 
         for region_name, side, slot in _EVENT_REGIONS:
+            logger.info("Processing region: %s", region_name)
             crop = crop_region(image, display_config.get(region_name))
             if not _region_has_content(crop, region_name):
+                logger.info("Region %s has no content", region_name)
                 self._previous_frames.pop(region_name, None)
                 self._last_emitted_text.pop(region_name, None)
                 continue
@@ -73,6 +75,7 @@ class EventOcrEngine:
             self._previous_frames[region_name] = _downscale_gray(crop)
             mode = "battle_text" if region_name == "battle_text" else "banner"
             text = _ocr_text(crop, mode=mode)
+            logger.info("Raw OCRed text: %s", text)
             if not text:
                 continue
 
@@ -171,6 +174,7 @@ def _preprocess_for_ocr(crop_rgb: np.ndarray, *, mode: str = "banner") -> np.nda
 
 
 def _ocr_text(crop_rgb: np.ndarray, *, mode: str = "banner") -> str:
+    logger.info("OCRing text in %s", mode)
     reader = getattr(_ocr_text, "_reader", None)
     if reader is None:
         reader = easyocr.Reader(["en"], gpu=False, verbose=False)

@@ -7,6 +7,10 @@ from app.schema.gamestate import GameState
 from app.schema.suggestions import TeamPreviewSuggestion, TurnSuggestion
 from app.schema.team import PlayerTeam
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class BattlePhase(str, Enum):
     IDLE = "idle"
@@ -84,6 +88,7 @@ class SessionStore:
         reducer applies the (possibly patched) event to ``game_state``.
         Returns ``(turn, index)`` pairs patched by the completer.
         """
+        logger.info("Appending battle log event: %s", event)
         if isinstance(event, TurnStartEvent):
             turn = event.turn_number
             if turn < 1:

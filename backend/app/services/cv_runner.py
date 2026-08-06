@@ -49,6 +49,7 @@ def _poll_interval(phase: BattlePhase) -> float:
 
 async def _process_team_preview_entry(store: SessionStore, frame) -> None:
     """Crop opponent sprites, identify six species, and request bring suggestions."""
+    logger.info("Processing team preview entry")
     if store._team_preview_processed or store.player_team is None:
         return
 
@@ -97,6 +98,7 @@ def _process_battle_animation_events(
     config,
 ) -> None:
     """OCR changed per-slot banners and battle text, appending parsed events."""
+    logger.info("Processing battle animation events")
     for event in event_ocr.process_frame(
         frame,
         config,
@@ -114,6 +116,7 @@ def _process_hp_animation_frame(
     config,
 ) -> None:
     """Poll slot cards at animation FPS; append stable HPChangeEvents."""
+    logger.info("Processing HP animation frame")
     for event in hp_reader.process_animation_frame(
         frame,
         config,
@@ -138,6 +141,7 @@ def _process_hp_action_selection_snapshot(
     config,
 ) -> None:
     """Authoritative 4-slot HP snapshot on action_selection entry."""
+    logger.info("Processing HP action selection snapshot")
     for event in hp_reader.read_action_selection_snapshot(
         frame,
         config,
@@ -215,6 +219,7 @@ async def _cv_loop(store: SessionStore) -> None:
         while store.cv_running:
             previous_adb = store.adb_connected
             store.adb_connected = await asyncio.to_thread(is_adb_connected)
+            logger.info("ADB connected: %s", store.adb_connected)
             if store.adb_connected != previous_adb:
                 publish_session(store)
             if not store.adb_connected:

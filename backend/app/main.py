@@ -24,7 +24,10 @@ from app.services.ws_hub import ws_hub
 load_dotenv()
 
 logger = logging.getLogger(__name__)
-
+logging.basicConfig(
+    level=logging.INFO,  # or DEBUG
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
