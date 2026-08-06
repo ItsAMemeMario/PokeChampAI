@@ -56,6 +56,7 @@ def capture_screenshot(device: str | None = None) -> np.ndarray:
     Returns an RGB uint8 numpy array with shape (height, width, 3).
     Raises RuntimeError when ADB is unavailable or capture fails.
     """
+    logger.info("Beginning ADB screencap")
     device = device or get_adb_device()
     cmd = [*_adb_base_cmd(device), "exec-out", "screencap", "-p"]
     try:
@@ -85,4 +86,5 @@ def capture_screenshot(device: str | None = None) -> np.ndarray:
     except Exception as exc:
         raise RuntimeError("Failed to decode ADB screencap PNG") from exc
 
+    logger.info("Captured screenshot")
     return np.asarray(rgb, dtype=np.uint8)

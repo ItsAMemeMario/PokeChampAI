@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from io import BytesIO
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from google import genai
@@ -20,9 +20,38 @@ from app.schema.team import OpponentTeamPreview, PlayerTeam
 from app.data.species import REGULATION_MB_SPECIES
 from app.util.legal_snap import snap_to_legal
 
+if TYPE_CHECKING:
+    from app.services.mock_gemini import MockGeminiService
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3.6-flash"
+
+
+def create_gemini_service(
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+    client: genai.Client | None = None,
+    interaction_id: str | None = None,
+) -> GeminiService | MockGeminiService:
+    """Return a real Gemini client, or ``MockGeminiService`` when no API key is set.
+
+    Pass an explicit ``client`` (as tests do) to force the real service without a key.
+    """
+    from app.services.mock_gemini import MockGeminiService
+
+    resolved_key = (
+        api_key if api_key is not None else os.environ.get("GEMINI_API_KEY", "")
+    ).strip()
+    if client is None and not resolved_key:
+        return MockGeminiService(interaction_id=interaction_id)
+    return GeminiService(
+        api_key=api_key,
+        model=model,
+        client=client,
+        interaction_id=interaction_id,
+    )
 
 
 class GeminiService:

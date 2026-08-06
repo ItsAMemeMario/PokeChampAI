@@ -8,7 +8,7 @@ import numpy as np
 
 from app.cv.regions import RegionConfig, config_for_image, crop_region
 from app.schema.team import OpponentTeamPreview
-from app.services.gemini import GeminiService
+from app.services.gemini import GeminiService, create_gemini_service
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ async def read_opponent_team_preview(
     """
     slots = crop_opponent_sprite_slots(image, config)
     vision_input = stack_sprite_slots(slots)
-    service = gemini or GeminiService()
+    service = gemini or create_gemini_service()
     species = await service.identify_opponent_species(vision_input)
     logger.info("Opponent team preview identified: %s", species)
     return OpponentTeamPreview(species=species)

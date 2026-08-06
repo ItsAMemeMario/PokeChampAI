@@ -14,8 +14,15 @@ from app.cv.team_preview_reader import read_opponent_team_preview
 from app.cv.team_selection_reader import read_player_selected_species
 from app.schema.battle_log import TurnStartEvent
 from app.services.gamestate_reducer import ensure_seeded
-from app.services.gemini import GeminiService, previous_turn_battle_log_events
+from app.services.gemini import create_gemini_service, previous_turn_battle_log_events
 from app.services.session import BattlePhase, SessionStore
+from app.services.ws_hub import (
+    publish_phase,
+    publish_session,
+    publish_state,
+    publish_team_preview,
+    publish_turn_suggestion,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,17 +49,14 @@ def _poll_interval(phase: BattlePhase) -> float:
 
 async def _process_team_preview_entry(store: SessionStore, frame) -> None:
     """Crop opponent sprites, identify six species, and request bring suggestions."""
+    logger.info("Processing team preview entry")
     if store._team_preview_processed or store.player_team is None:
         return
 
     store._team_preview_processed = True
     config = load_regions()
 
-    try:
-        gemini = GeminiService()
-    except ValueError:
-        logger.warning("GEMINI_API_KEY not set; skipping team preview vision")
-        return
+    gemini = create_gemini_service()
 
     try:
         opponent = await read_opponent_team_preview(frame, config, gemini=gemini)
@@ -62,6 +66,7 @@ async def _process_team_preview_entry(store: SessionStore, frame) -> None:
             opponent.species,
         )
         store.gemini_interaction_id = gemini.interaction_id
+        publish_team_preview(store)
         logger.info(
             "Team preview suggestion ready (opponent 6: %s)",
             ", ".join(opponent.species),
@@ -82,6 +87,7 @@ def _process_team_selected_frame(store: SessionStore, frame, config) -> None:
         logger.exception("Player team selection read failed")
         return
     store.player_selected_species = selected
+    publish_team_preview(store)
     logger.info("Player selected bring: %s", ", ".join(selected))
 
 
@@ -92,6 +98,7 @@ def _process_battle_animation_events(
     config,
 ) -> None:
     """OCR changed per-slot banners and battle text, appending parsed events."""
+    logger.info("Processing battle animation events")
     for event in event_ocr.process_frame(
         frame,
         config,
@@ -109,6 +116,7 @@ def _process_hp_animation_frame(
     config,
 ) -> None:
     """Poll slot cards at animation FPS; append stable HPChangeEvents."""
+    logger.info("Processing HP animation frame")
     for event in hp_reader.process_animation_frame(
         frame,
         config,
@@ -133,6 +141,7 @@ def _process_hp_action_selection_snapshot(
     config,
 ) -> None:
     """Authoritative 4-slot HP snapshot on action_selection entry."""
+    logger.info("Processing HP action selection snapshot")
     for event in hp_reader.read_action_selection_snapshot(
         frame,
         config,
@@ -179,11 +188,7 @@ async def _process_turn_suggestion(store: SessionStore) -> None:
     if store._turn_suggestion_turn == store.turn_number:
         return
 
-    try:
-        gemini = GeminiService(interaction_id=store.gemini_interaction_id)
-    except ValueError:
-        logger.warning("GEMINI_API_KEY not set; skipping turn suggestion")
-        return
+    gemini = create_gemini_service(interaction_id=store.gemini_interaction_id)
 
     try:
         recent = previous_turn_battle_log_events(store.battle_logs, store.turn_number)
@@ -197,6 +202,7 @@ async def _process_turn_suggestion(store: SessionStore) -> None:
         store.turn_suggestion = suggestion
         store._turn_suggestion_turn = store.turn_number
         store.gemini_interaction_id = gemini.interaction_id
+        publish_turn_suggestion(store)
         logger.info("Turn suggestion ready for turn %d", store.turn_number)
     except Exception:
         logger.exception("Turn suggestion failed for turn %d", store.turn_number)
@@ -211,7 +217,11 @@ async def _cv_loop(store: SessionStore) -> None:
     region_config = load_regions()
     try:
         while store.cv_running:
+            previous_adb = store.adb_connected
             store.adb_connected = await asyncio.to_thread(is_adb_connected)
+            logger.info("ADB connected: %s", store.adb_connected)
+            if store.adb_connected != previous_adb:
+                publish_session(store)
             if not store.adb_connected:
                 logger.debug("ADB not connected; retrying in %.0fs", _ADB_PROBE_INTERVAL_SEC)
                 await asyncio.sleep(_ADB_PROBE_INTERVAL_SEC)
@@ -221,12 +231,18 @@ async def _cv_loop(store: SessionStore) -> None:
                 frame = await asyncio.to_thread(capture_screenshot)
             except RuntimeError as exc:
                 logger.debug("Screenshot capture failed: %s", exc)
-                store.adb_connected = False
+                if store.adb_connected:
+                    store.adb_connected = False
+                    publish_session(store)
                 await asyncio.sleep(_ADB_PROBE_INTERVAL_SEC)
                 continue
 
             transition = detector.detect_transition(frame)
+            previous_phase = store.phase
             store.phase = transition.current
+
+            if store.phase != previous_phase:
+                publish_phase(store)
 
             if transition.entered_team_preview:
                 store.begin_battle()
@@ -242,6 +258,7 @@ async def _cv_loop(store: SessionStore) -> None:
 
             if transition.entered_battle:
                 ensure_seeded(store)
+                publish_state(store)
 
             if transition.entered_action_selection:
                 _emit_turn_start_on_action_selection_entry(store)

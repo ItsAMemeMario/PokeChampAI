@@ -15,8 +15,8 @@ from app.cv.regions import RegionConfig, config_for_image, crop_region
 from app.schema.battle_log import HPChangeEvent
 from app.schema.common import Pokemon, Side, Slot
 from app.schema.gamestate import GameState
+from app.data.species import REGULATION_MB_SPECIES
 from app.util.legal_snap import snap_to_legal
-from backend.app.data import REGULATION_MB_SPECIES
 
 logger = logging.getLogger(__name__)
 

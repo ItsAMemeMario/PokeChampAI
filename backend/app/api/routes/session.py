@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from app.api.deps import get_session_store
 from app.services.cv_runner import start_cv, stop_cv
 from app.services.session import BattlePhase, SessionStore
+from app.services.ws_hub import publish_session, publish_snapshot
 
 router = APIRouter(prefix="/api/session", tags=["session"])
 
@@ -45,6 +46,7 @@ async def start_session(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     start_cv(store)
+    publish_snapshot(store)
     return _session_status(store)
 
 
@@ -54,4 +56,5 @@ async def stop_session(
 ) -> SessionStatus:
     store.stop_monitoring()
     await stop_cv()
+    publish_session(store)
     return _session_status(store)

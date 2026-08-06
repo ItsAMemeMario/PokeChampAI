@@ -7,6 +7,10 @@ from app.schema.gamestate import GameState
 from app.schema.suggestions import TeamPreviewSuggestion, TurnSuggestion
 from app.schema.team import PlayerTeam
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class BattlePhase(str, Enum):
     IDLE = "idle"
@@ -84,6 +88,7 @@ class SessionStore:
         reducer applies the (possibly patched) event to ``game_state``.
         Returns ``(turn, index)`` pairs patched by the completer.
         """
+        logger.info("Appending battle log event: %s", event)
         if isinstance(event, TurnStartEvent):
             turn = event.turn_number
             if turn < 1:
@@ -114,6 +119,22 @@ class SessionStore:
         patched = complete_battle_logs(self)
         # Apply the (possibly completer-patched) event at the end of this turn.
         apply_event_to_store(self, self.battle_logs[turn][-1])
+
+        # Live dashboard: push log patches, the appended event, and latest state.
+        from app.services.ws_hub import (
+            publish_log,
+            publish_log_patched,
+            publish_state,
+        )
+
+        for patch_turn, patch_index in patched:
+            publish_log_patched(
+                patch_turn,
+                patch_index,
+                self.battle_logs[patch_turn][patch_index],
+            )
+        publish_log(self.battle_logs[turn][-1])
+        publish_state(self)
         return patched
 
 

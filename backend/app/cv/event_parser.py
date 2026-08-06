@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 from contextvars import ContextVar
 from typing import Iterable
@@ -29,6 +31,8 @@ from app.data.items import REGULATION_MB_ITEMS, is_regulation_mb_item
 from app.data.moves import REGULATION_MB_MOVES
 from app.schema.common import Pokemon, Side, Slot
 from app.util.legal_snap import snap_to_legal
+
+logger = logging.getLogger(__name__)
 
 _PLAYER_SPECIES: ContextVar[tuple[str, ...]] = ContextVar(
     "event_parser_player_species",
@@ -271,6 +275,7 @@ def parse_side_banner(
     if not match:
         return None
 
+    logger.info("Parsing side banner")
     species = match.group("species").strip()
     name = match.group("name").strip()
     pokemon = _pokemon(
@@ -375,6 +380,7 @@ def _parse_stat_changes(text: str) -> list[StatChangeEvent]:
     if match is None:
         return []
 
+    logger.info("Parsing stat changes")
     subjects = _parse_stat_subjects(match.group("source"))
     clause_stats = _parse_stat_clause(match.group("clause"))
     if not subjects or not clause_stats:
@@ -399,18 +405,22 @@ def _parse_stat_changes(text: str) -> list[StatChangeEvent]:
 def _parse_weather(text: str) -> WeatherChangeEvent | None:
     lowered = text.lower()
     if "sunlight" in lowered:
+        logger.info("Parsing weather")
         if "faded" in lowered:
             return WeatherChangeEvent(raw_text=text, weather="none")
         return WeatherChangeEvent(raw_text=text, weather="sunny")
     if re.search(r"\brain\b", lowered):
+        logger.info("Parsing weather")
         if "stopped" in lowered:
             return WeatherChangeEvent(raw_text=text, weather="none")
         return WeatherChangeEvent(raw_text=text, weather="rain")
     if "sandstorm" in lowered or "picked up" in lowered:
+        logger.info("Parsing weather")
         if "subsided" in lowered:
             return WeatherChangeEvent(raw_text=text, weather="none")
         return WeatherChangeEvent(raw_text=text, weather="sandstorm")
     if re.search(r"\bsnow\b", lowered):
+        logger.info("Parsing weather")
         if "stopped" in lowered:
             return WeatherChangeEvent(raw_text=text, weather="none")
         return WeatherChangeEvent(raw_text=text, weather="snow")
@@ -420,6 +430,7 @@ def _parse_weather(text: str) -> WeatherChangeEvent | None:
 def _parse_terrain(text: str) -> TerrainChangeEvent | None:
     lowered = text.lower()
     if "battlefield" in lowered:
+        logger.info("Parsing terrain")
         if "electric" in lowered or "current" in lowered:
             return TerrainChangeEvent(raw_text=text, terrain="electric_terrain")
         if "grass" in lowered or "grew" in lowered:
@@ -436,6 +447,7 @@ def _parse_terrain(text: str) -> TerrainChangeEvent | None:
 def _parse_trick_room(text: str) -> TrickRoomChangeEvent | None:
     lowered = text.lower()
     if "twisted" in lowered or "dimensions" in lowered:
+        logger.info("Parsing trick room")
         if "returned" in lowered or "normal" in lowered:
             return TrickRoomChangeEvent(raw_text=text, active=False)
         return TrickRoomChangeEvent(raw_text=text, active=True)
@@ -446,6 +458,7 @@ def _parse_side_condition(text: str) -> SideConditionEvent | None:
     match = _SIDE_CONDITION_RE.search(text)
     if not match:
         return None
+    logger.info("Parsing side condition")
     lowered = text.lower()
     side = _side_from_text(text)
     if "aurora veil" in lowered:
@@ -471,6 +484,7 @@ def _parse_status(text: str) -> StatusAppliedEvent | None:
     match = _STATUS_RE.search(text)
     if not match:
         return None
+    logger.info("Parsing status")
     species = match.group("species").strip()
     lowered = text.lower()
     side = _side_from_text(text)
@@ -499,6 +513,7 @@ def _parse_volatile(text: str) -> VolatileAppliedEvent | None:
     match = _VOLATILE_RE.search(text)
     if not match:
         return None
+    logger.info("Parsing volatile")
     species = match.group("species").strip()
     lowered = text.lower()
     side = _side_from_text(text)
@@ -521,6 +536,7 @@ def _parse_switch(text: str) -> list[SwitchInEvent | SwitchOutEvent]:
     match = _SWITCH_RE.search(text)
     if not match:
         return []
+    logger.info("Parsing switch")
     lowered = text.lower()
     if match.group("player_dual_1") is not None:
         return [
@@ -593,6 +609,7 @@ def _parse_mega_evolution(text: str) -> MegaEvolutionEvent | None:
     match = _MEGA_EVOLUTION_RE.search(text)
     if not match:
         return None
+    logger.info("Parsing mega evolution")
     species = match.group("species").strip()
     species = re.sub(r"['\u2019]s$", "", species).strip()
     mega_form = (match.group("mega_form") or "").strip().upper()
@@ -608,6 +625,7 @@ def _parse_move_used(text: str) -> MoveUsedEvent | None:
     match = _MOVE_USED_RE.search(text)
     if not match:
         return None
+    logger.info("Parsing move used")
     # Trailing bang / OCR-as-l is already normalized to "!" before this runs.
     move = match.group("move").strip().rstrip("!.,").strip()
     if not move:
@@ -624,6 +642,7 @@ def _parse_faint(text: str) -> FaintEvent | None:
     match = _FAINT_RE.search(text)
     if not match:
         return None
+    logger.info("Parsing faint")
     return FaintEvent(
         raw_text=text,
         pokemon=_pokemon(match.group("species"), _side_from_text(text)),
@@ -633,6 +652,7 @@ def _parse_faint(text: str) -> FaintEvent | None:
 def _parse_move_failed(text: str) -> MoveFailedEvent | None:
     if _MOVE_FAILED_RE.match(text) is None:
         return None
+    logger.info("Parsing move failed")
     # Actor resolved later by most recent move used
     return MoveFailedEvent(raw_text=text)
 
@@ -644,7 +664,9 @@ def parse_battle_text(
     opponent_species: Iterable[str] | None = None,
 ) -> list[BattleLogEvent]:
     """Parse bottom battle-text OCR into one or more typed events."""
+    logger.info("Parsing battle text: %s", text)
     normalized = normalize_ocr_text(text)
+    logger.info("Normalized OCR text: %s", normalized)
     if not normalized:
         return []
 
@@ -657,7 +679,7 @@ def parse_battle_text(
     try:
         events: list[BattleLogEvent] = []
 
-        for multi_parser in (_parse_stat_changes, _parse_switch):
+        for multi_parser in enumerate((_parse_stat_changes, _parse_switch)):
             events.extend(multi_parser(normalized))
 
         for single_parser in (
@@ -675,7 +697,9 @@ def parse_battle_text(
             event = single_parser(normalized)
             if event is not None:
                 events.append(event)
-
+        
+        logger.info("Parsing complete, added events: %s", json.dumps(events, indent=2))
+        
         return _dedupe_events(events)
     finally:
         if player_token is not None:
@@ -705,4 +729,5 @@ def _dedupe_events(events: Iterable[BattleLogEvent]) -> list[BattleLogEvent]:
             continue
         seen.add(key)
         unique.append(event)
+    logger.info("Deduped events: %s", json.dumps(unique, indent=2))
     return unique
