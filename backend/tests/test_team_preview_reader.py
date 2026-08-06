@@ -163,13 +163,13 @@ async def test_cv_team_preview_pipeline_stores_suggestion() -> None:
 
     import app.services.cv_runner as cv_runner_module
 
-    original = cv_runner_module.GeminiService
+    original = cv_runner_module.create_gemini_service
     mock_service_cls = MagicMock(return_value=mock_gemini)
-    cv_runner_module.GeminiService = mock_service_cls
+    cv_runner_module.create_gemini_service = mock_service_cls
     try:
         await _process_team_preview_entry(store, image)
     finally:
-        cv_runner_module.GeminiService = original
+        cv_runner_module.create_gemini_service = original
 
     assert store.opponent_team_species == opponent_species
     assert store.team_preview_suggestion is not None

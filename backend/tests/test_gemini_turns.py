@@ -500,14 +500,14 @@ async def test_process_turn_suggestion_stores_and_debounces() -> None:
     mock_gemini.suggest_turn = AsyncMock(return_value=suggestion)
     mock_gemini.interaction_id = "int_turn_2"
 
-    original = cv_runner_module.GeminiService
+    original = cv_runner_module.create_gemini_service
     mock_service_cls = MagicMock(return_value=mock_gemini)
-    cv_runner_module.GeminiService = mock_service_cls
+    cv_runner_module.create_gemini_service = mock_service_cls
     try:
         await cv_runner_module._process_turn_suggestion(store)
         await cv_runner_module._process_turn_suggestion(store)
     finally:
-        cv_runner_module.GeminiService = original
+        cv_runner_module.create_gemini_service = original
 
     assert store.turn_suggestion == suggestion
     assert store._turn_suggestion_turn == 2
@@ -547,14 +547,14 @@ async def test_process_turn_suggestion_skips_without_opponent_species() -> None:
     mock_gemini = MagicMock()
     mock_gemini.suggest_turn = AsyncMock()
     mock_service_cls = MagicMock(return_value=mock_gemini)
-    original = cv_runner_module.GeminiService
-    cv_runner_module.GeminiService = mock_service_cls
+    original = cv_runner_module.create_gemini_service
+    cv_runner_module.create_gemini_service = mock_service_cls
     try:
         await cv_runner_module._process_turn_suggestion(store)
         store.opponent_team_species = []
         await cv_runner_module._process_turn_suggestion(store)
     finally:
-        cv_runner_module.GeminiService = original
+        cv_runner_module.create_gemini_service = original
 
     assert store.turn_suggestion is None
     mock_gemini.suggest_turn.assert_not_awaited()
@@ -562,24 +562,40 @@ async def test_process_turn_suggestion_skips_without_opponent_species() -> None:
 
 
 @pytest.mark.asyncio
-async def test_process_turn_suggestion_skips_without_api_key() -> None:
+async def test_process_turn_suggestion_uses_mock_without_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from app.services import cv_runner as cv_runner_module
+    from app.services.mock_gemini import FILLER_TEXT
+
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
     store = SessionStore()
     store.player_team = _sample_team()
-    store.game_state = _game_state(turn=1)
+    store.game_state = GameState(
+        turn_number=1,
+        field=FieldState(),
+        player=_side(
+            _active("Sinistcha"),
+            _active("Staraptor"),
+            benched=[
+                BenchedPokemon(species="Garchomp", hp_percentage=100),
+                BenchedPokemon(species="Incineroar", hp_percentage=100),
+            ],
+        ),
+        opponent=_side(_active("Scizor"), _active("Hatterene")),
+    )
     store.turn_number = 1
     store.opponent_team_species = _opponent_six()
 
-    original = cv_runner_module.GeminiService
-    cv_runner_module.GeminiService = MagicMock(side_effect=ValueError("no key"))
-    try:
-        await cv_runner_module._process_turn_suggestion(store)
-    finally:
-        cv_runner_module.GeminiService = original
+    await cv_runner_module._process_turn_suggestion(store)
 
-    assert store.turn_suggestion is None
-    assert store._turn_suggestion_turn is None
+    assert store.turn_suggestion is not None
+    assert store.turn_suggestion.turn_number == 1
+    assert len(store.turn_suggestion.actions) == 2
+    assert store.turn_suggestion.overall_reasoning == FILLER_TEXT
+    assert store.gemini_interaction_id == "mock-interaction"
+    assert store._turn_suggestion_turn == 1
 
 
 @pytest.mark.asyncio

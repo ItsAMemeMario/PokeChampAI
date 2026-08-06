@@ -14,7 +14,7 @@ from app.cv.team_preview_reader import read_opponent_team_preview
 from app.cv.team_selection_reader import read_player_selected_species
 from app.schema.battle_log import TurnStartEvent
 from app.services.gamestate_reducer import ensure_seeded
-from app.services.gemini import GeminiService, previous_turn_battle_log_events
+from app.services.gemini import create_gemini_service, previous_turn_battle_log_events
 from app.services.session import BattlePhase, SessionStore
 from app.services.ws_hub import (
     publish_phase,
@@ -55,11 +55,7 @@ async def _process_team_preview_entry(store: SessionStore, frame) -> None:
     store._team_preview_processed = True
     config = load_regions()
 
-    try:
-        gemini = GeminiService()
-    except ValueError:
-        logger.warning("GEMINI_API_KEY not set; skipping team preview vision")
-        return
+    gemini = create_gemini_service()
 
     try:
         opponent = await read_opponent_team_preview(frame, config, gemini=gemini)
@@ -188,11 +184,7 @@ async def _process_turn_suggestion(store: SessionStore) -> None:
     if store._turn_suggestion_turn == store.turn_number:
         return
 
-    try:
-        gemini = GeminiService(interaction_id=store.gemini_interaction_id)
-    except ValueError:
-        logger.warning("GEMINI_API_KEY not set; skipping turn suggestion")
-        return
+    gemini = create_gemini_service(interaction_id=store.gemini_interaction_id)
 
     try:
         recent = previous_turn_battle_log_events(store.battle_logs, store.turn_number)
