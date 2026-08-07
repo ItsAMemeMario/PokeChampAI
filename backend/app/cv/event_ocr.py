@@ -6,10 +6,10 @@ import logging
 from dataclasses import dataclass, field
 
 import cv2
-import easyocr
 import numpy as np
 
 from app.cv.event_parser import parse_battle_text, parse_side_banner
+from app.cv.ocr_reader import read_text
 from app.cv.regions import RegionConfig, config_for_image, crop_region
 from app.schema.battle_log import BattleLogEvent
 from app.schema.common import Side, Slot
@@ -33,6 +33,10 @@ _BANNER_DARK_RATIO_MIN = 80.0
 _BANNER_BRIGHT_RATIO_MIN = 3.0
 _FRAME_DIFF_MEAN_MIN = 4.0
 _DIFF_DOWNSCALE = 4
+# Keep near-gray bright pixels (white battle text); drop colored floor lights.
+_BATTLE_TEXT_CHROMA_MAX = 25
+_BATTLE_TEXT_BRIGHT_MIN = 180
+_BATTLE_TEXT_OCR_UPSCALE = 2.0
 
 
 @dataclass
@@ -163,22 +167,34 @@ def _region_changed(crop_rgb: np.ndarray, previous_gray: np.ndarray | None) -> b
 
 
 def _preprocess_for_ocr(crop_rgb: np.ndarray, *, mode: str = "banner") -> np.ndarray:
+    if mode == "battle_text":
+        # White battle text over reflective floors: gray threshold keeps cyan/colored
+        # lights that corrupt glyphs (e.g. "on" → "o"). Mask to near-gray bright pixels.
+        r = crop_rgb[:, :, 0].astype(np.int16)
+        g = crop_rgb[:, :, 1].astype(np.int16)
+        b = crop_rgb[:, :, 2].astype(np.int16)
+        chroma = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
+        brightness = (r + g + b) // 3
+        keep = (chroma <= _BATTLE_TEXT_CHROMA_MAX) & (brightness >= _BATTLE_TEXT_BRIGHT_MIN)
+        masked = np.zeros(crop_rgb.shape[:2], dtype=np.uint8)
+        masked[keep] = 255
+        upscaled = cv2.resize(
+            masked,
+            None,
+            fx=_BATTLE_TEXT_OCR_UPSCALE,
+            fy=_BATTLE_TEXT_OCR_UPSCALE,
+            interpolation=cv2.INTER_CUBIC,
+        )
+        return cv2.cvtColor(upscaled, cv2.COLOR_GRAY2RGB)
+
     gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
     upscaled = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
-    if mode == "battle_text":
-        # White battle-message text on a dark translucent bar — Otsu often fragments it.
-        _, thresh = cv2.threshold(upscaled, 180, 255, cv2.THRESH_BINARY)
-    else:
-        _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    _, thresh = cv2.threshold(upscaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     return cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB)
 
 
 def _ocr_text(crop_rgb: np.ndarray, *, mode: str = "banner") -> str:
     logger.info("OCRing text in %s", mode)
-    reader = getattr(_ocr_text, "_reader", None)
-    if reader is None:
-        reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-        _ocr_text._reader = reader  # type: ignore[attr-defined]
     prepared = _preprocess_for_ocr(crop_rgb, mode=mode)
-    lines = reader.readtext(prepared, detail=0, paragraph=True)
+    lines = read_text(prepared, detail=0, paragraph=True)
     return " ".join(lines).strip()

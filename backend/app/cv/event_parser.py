@@ -466,7 +466,7 @@ def _parse_side_condition(text: str) -> SideConditionEvent | None:
         condition = "light_screen"
     elif "reflect" in lowered:
         condition = "reflect"
-    elif "tailwind" in lowered:
+    elif "tailwind" in lowered or "blow" in lowered:
         condition = "tailwind"
     elif "toxic spikes" in lowered:
         condition = "toxic_spikes"

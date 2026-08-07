@@ -5,6 +5,8 @@ python-dotenv
 google-genai>=2.3.0
 opencv-python
 easyocr
+# EasyOCR needs CUDA-enabled torch (no CPU fallback in this project).
+# Install torch/torchvision from https://pytorch.org for your CUDA version.
 numpy
 Pillow
 websockets

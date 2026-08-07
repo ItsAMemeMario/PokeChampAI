@@ -6,9 +6,9 @@ import logging
 import re
 
 import cv2
-import easyocr
 import numpy as np
 
+from app.cv.ocr_reader import read_text
 from app.cv.regions import RegionConfig, config_for_image, crop_region
 from app.schema.team import PlayerTeam
 
@@ -53,12 +53,8 @@ def _preprocess_order_badge_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
 
 
 def _ocr_order_badge_text(crop_rgb: np.ndarray) -> str:
-    reader = getattr(_ocr_order_badge_text, "_reader", None)
-    if reader is None:
-        reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-        _ocr_order_badge_text._reader = reader  # type: ignore[attr-defined]
     prepared = _preprocess_order_badge_for_ocr(crop_rgb)
-    lines = reader.readtext(prepared, detail=0, paragraph=True)
+    lines = read_text(prepared, detail=0, paragraph=True)
     return " ".join(lines).strip()
 
 

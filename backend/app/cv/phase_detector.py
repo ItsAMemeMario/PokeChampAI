@@ -10,8 +10,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image
-import easyocr
 
+from app.cv.ocr_reader import read_text
 from app.cv.regions import (
     RegionConfig,
     config_for_image,
@@ -158,12 +158,8 @@ def _preprocess_prompt_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
 
 
 def _ocr_text(crop_rgb: np.ndarray) -> str:
-    reader = getattr(_ocr_text, "_reader", None)
-    if reader is None:
-        reader = easyocr.Reader(["en"], gpu=False, verbose=False)
-        _ocr_text._reader = reader  # type: ignore[attr-defined]
     prepared = _preprocess_prompt_for_ocr(crop_rgb)
-    lines = reader.readtext(prepared, detail=0, paragraph=True)
+    lines = read_text(prepared, detail=0, paragraph=True)
     return " ".join(lines).strip()
 
 
