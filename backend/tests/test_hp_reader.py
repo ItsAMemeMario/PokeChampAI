@@ -11,9 +11,10 @@ from PIL import Image
 from app.cv.hp_reader import (
     HPReader,
     SlotCardRead,
+    _hp_bar_in_card,
     parse_slot_card_text,
     read_slot_card,
-    _region_has_content,
+    _slot_card_visible,
 )
 from app.cv.regions import crop_region, default_assets_dir, load_regions
 from app.schema.gamestate import (
@@ -72,6 +73,24 @@ def _game_state(
 def _load_asset(name: str) -> np.ndarray:
     path = default_assets_dir() / name
     return np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
+
+
+def _with_bar_motion(
+    image: np.ndarray,
+    region_config,
+    card_name: str,
+    salt: int,
+) -> np.ndarray:
+    """Perturb in-card HP-bar pixels so the motion gate fires without killing visibility."""
+    out = image.copy()
+    cx, cy, _cw, _ch = region_config.get(card_name)
+    bx, by, bw, bh = _hp_bar_in_card(region_config)
+    x, y = cx + bx, cy + by
+    bar = out[y : y + bh, x : x + bw].astype(np.int16)
+    # Alternate brighter/darker so consecutive salts differ after 4× downscale.
+    delta = 35 if salt % 2 else -35
+    out[y : y + bh, x : x + bw] = np.clip(bar + delta, 0, 255).astype(np.uint8)
+    return out
 
 
 @pytest.fixture
@@ -175,19 +194,19 @@ def test_ocr_action_selection_slot_cards(region_config) -> None:
         assert reading == expected_reading, f"{region_name}: got {reading!r}"
 
 
-def test_region_has_content_on_action_selection_cards(region_config) -> None:
+def test_slot_card_visible_on_action_selection_cards(region_config) -> None:
     image = _load_asset("action_selection.png")
     for name in (
-        "player_slot_1_card",
+        "player_slot_1_card",  # green-highlight border during action selection
         "player_slot_2_card",
         "opponent_slot_1_card",
         "opponent_slot_2_card",
     ):
         crop = crop_region(image, region_config.get(name))
-        assert _region_has_content(crop) is True, name
+        assert _slot_card_visible(crop) is True, name
 
     empty = np.zeros((94, 210, 3), dtype=np.uint8)
-    assert _region_has_content(empty) is False
+    assert _slot_card_visible(empty) is False
 
 
 @patch("app.cv.hp_reader._ocr_slot_card_text")
@@ -207,15 +226,30 @@ def test_stability_gate_emits_delta_vs_game_state(mock_ocr, region_config) -> No
 
     game_state = _game_state(player_slot_1=_active("Sinistcha", 100))
     reader = HPReader()
+    card = "player_slot_1_card"
 
-    # Frame 1: establish baseline at 100%.
-    assert reader.process_animation_frame(masked, region_config, game_state) == []
+    # Frame 1: establish baseline at 100% (first bar sample counts as motion).
+    assert (
+        reader.process_animation_frame(
+            _with_bar_motion(masked, region_config, card, 1),
+            region_config,
+            game_state,
+        )
+        == []
+    )
 
     # Frame 2: HP drops — start gate (stable_frames=1), no emit yet.
     mock_ocr.return_value = "Sinistcha 82/178"
-    assert reader.process_animation_frame(masked, region_config, game_state) == []
+    assert (
+        reader.process_animation_frame(
+            _with_bar_motion(masked, region_config, card, 2),
+            region_config,
+            game_state,
+        )
+        == []
+    )
 
-    # Frame 3: same damaged value — commit (stable_frames=2).
+    # Frame 3: same damaged value — commit (stable_frames=2); tracking keeps OCR alive.
     events = reader.process_animation_frame(masked, region_config, game_state)
     assert len(events) == 1
     event = events[0]
@@ -226,7 +260,7 @@ def test_stability_gate_emits_delta_vs_game_state(mock_ocr, region_config) -> No
     # Delta vs GameState (100), not vs previous frame OCR baseline.
     assert event.hp_pct_change == 46 - 100
 
-    # Lingering same value must not re-emit.
+    # Lingering same value must not re-emit (no bar motion + tracking closed).
     assert reader.process_animation_frame(masked, region_config, game_state) == []
 
 
@@ -245,10 +279,25 @@ def test_stability_gate_resets_when_value_keeps_changing(mock_ocr, region_config
 
     game_state = _game_state(opponent_slot_2=_active("Hatterene", 100))
     reader = HPReader()
+    card = "opponent_slot_2_card"
 
-    assert reader.process_animation_frame(masked, region_config, game_state) == []
+    assert (
+        reader.process_animation_frame(
+            _with_bar_motion(masked, region_config, card, 1),
+            region_config,
+            game_state,
+        )
+        == []
+    )
     mock_ocr.return_value = "Hatterene 80%"
-    assert reader.process_animation_frame(masked, region_config, game_state) == []
+    assert (
+        reader.process_animation_frame(
+            _with_bar_motion(masked, region_config, card, 2),
+            region_config,
+            game_state,
+        )
+        == []
+    )
     # Still animating — candidate resets to 60%, stable_frames=1 (no commit yet).
     mock_ocr.return_value = "Hatterene 60%"
     assert reader.process_animation_frame(masked, region_config, game_state) == []
@@ -273,15 +322,31 @@ def test_empty_region_resets_tracker(mock_ocr, region_config) -> None:
 
     game_state = _game_state(player_slot_1=_active("Sinistcha", 100))
     reader = HPReader()
-    reader.process_animation_frame(masked, region_config, game_state)
+    card = "player_slot_1_card"
+    reader.process_animation_frame(
+        _with_bar_motion(masked, region_config, card, 1),
+        region_config,
+        game_state,
+    )
     mock_ocr.return_value = "Sinistcha 82/178"
-    reader.process_animation_frame(masked, region_config, game_state)
+    reader.process_animation_frame(
+        _with_bar_motion(masked, region_config, card, 2),
+        region_config,
+        game_state,
+    )
 
     empty = np.zeros_like(masked)
     assert reader.process_animation_frame(empty, region_config, game_state) == []
     # Tracker reset — need a fresh baseline before another start gate.
     mock_ocr.return_value = "Sinistcha 82/178"
-    assert reader.process_animation_frame(masked, region_config, game_state) == []
+    assert (
+        reader.process_animation_frame(
+            _with_bar_motion(masked, region_config, card, 3),
+            region_config,
+            game_state,
+        )
+        == []
+    )
     assert reader.process_animation_frame(masked, region_config, game_state) == []
 
 
@@ -326,10 +391,21 @@ def test_cv_runner_appends_hp_events(mock_ocr, region_config) -> None:
     store.game_state = _game_state(player_slot_1=_active("Sinistcha", 100))
     _open_turn(store)
     reader = HPReader()
+    card = "player_slot_1_card"
 
-    _process_hp_animation_frame(store, masked, reader, region_config)
+    _process_hp_animation_frame(
+        store,
+        _with_bar_motion(masked, region_config, card, 1),
+        reader,
+        region_config,
+    )
     mock_ocr.return_value = "Sinistcha 82/178"
-    _process_hp_animation_frame(store, masked, reader, region_config)
+    _process_hp_animation_frame(
+        store,
+        _with_bar_motion(masked, region_config, card, 2),
+        reader,
+        region_config,
+    )
     _process_hp_animation_frame(store, masked, reader, region_config)
 
     assert len(store.battle_logs[1]) == 2  # turn_start + hp_change

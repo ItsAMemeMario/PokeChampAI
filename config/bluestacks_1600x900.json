@@ -29,16 +29,28 @@
       80
     ],
     "opponent_slot_1_card": [
-      1328,
+      1326,
       46,
       210,
       94
+    ],
+    "opponent_slot_1_hp_bar": [
+      1343,
+      94,
+      195,
+      26
     ],
     "opponent_slot_2_card": [
       996,
       46,
       210,
       94
+    ],
+    "opponent_slot_2_hp_bar": [
+      1013,
+      94,
+      195,
+      26
     ],
     "player_team_selection": [
       245,
@@ -66,15 +78,27 @@
     ],
     "player_slot_1_card": [
       126,
-      780,
+      781,
       210,
       94
     ],
+    "player_slot_1_hp_bar": [
+      143,
+      829,
+      195,
+      26
+    ],
     "player_slot_2_card": [
-      458,
-      780,
+      456,
+      781,
       210,
       94
+    ],
+    "player_slot_2_hp_bar": [
+      473,
+      829,
+      195,
+      26
     ],
     "team_preview_prompt": [
       536,

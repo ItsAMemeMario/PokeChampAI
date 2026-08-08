@@ -6,12 +6,14 @@ import logging
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import cv2
 import numpy as np
+from PIL import Image
 
 from app.cv.ocr_reader import read_text
-from app.cv.regions import RegionConfig, config_for_image, crop_region
+from app.cv.regions import RegionConfig, config_for_image, crop_region, cv_templates_dir
 from app.schema.battle_log import HPChangeEvent
 from app.schema.common import Pokemon, Side, Slot
 from app.schema.gamestate import GameState
@@ -20,16 +22,23 @@ from app.util.legal_snap import snap_to_legal
 
 logger = logging.getLogger(__name__)
 
+# (card region, side, slot) — HP bar is cropped via a shared offset inside each card.
 _SLOT_CARD_REGIONS: tuple[tuple[str, Side, Slot], ...] = (
     ("player_slot_1_card", "player", 1),
     ("player_slot_2_card", "player", 2),
     ("opponent_slot_1_card", "opponent", 1),
     ("opponent_slot_2_card", "opponent", 2),
 )
+# Fallback if config lacks hp_bar regions; normally derived from calibrated JSON.
+_HP_BAR_IN_CARD_DEFAULT = (17, 48, 195, 26)  # x, y, w, h relative to card
 
 _STABLE_FRAMES_REQUIRED = 2
-_REGION_CONTENT_STD_MIN = 20.0
-_REGION_CONTENT_MEAN_MIN = 15.0
+# Grayscale template match (one template covers normal + green-highlight borders).
+_SLOT_CARD_TEMPLATE_SCORE_MIN = 0.42
+_EMPTY_CROP_MEAN_MAX = 5.0
+# HP-bar motion on the in-card bar crop only.
+_HP_BAR_DIFF_DOWNSCALE = 4
+_HP_BAR_DIFF_MEAN_MIN = 3.0
 # Keep near-gray + bright pixels (white name/HP text); drop colored bar/chrome.
 _SLOT_CARD_CHROMA_MAX = 25
 _SLOT_CARD_BRIGHT_MIN = 160
@@ -65,7 +74,7 @@ def read_slot_card(
     side, _slot = _side_slot_for_region(region_name)
     display_config = config_for_image(config, image)
     crop = crop_region(image, display_config.get(region_name))
-    if not _region_has_content(crop):
+    if not _slot_card_visible(crop):
         return None
     return parse_slot_card_text(
         _ocr_slot_card_text(crop),
@@ -76,8 +85,8 @@ def read_slot_card(
 
 
 def _side_slot_for_region(region_name: str) -> tuple[Side, Slot]:
-    for name, side, slot in _SLOT_CARD_REGIONS:
-        if name == region_name:
+    for card_name, side, slot in _SLOT_CARD_REGIONS:
+        if card_name == region_name:
             return side, slot
     raise KeyError(f"Not a slot card region: {region_name}")
 
@@ -107,10 +116,12 @@ class HPReader:
     """Poll slot cards during battle animation; snapshot on action selection."""
 
     _trackers: dict[str, HPReadTracker] = field(default_factory=dict)
+    _prev_bar_gray: dict[str, np.ndarray] = field(default_factory=dict)
 
     def reset(self) -> None:
         """Clear per-slot trackers (e.g. when leaving battle animation)."""
         self._trackers.clear()
+        self._prev_bar_gray.clear()
 
     def process_animation_frame(
         self,
@@ -121,16 +132,27 @@ class HPReader:
         player_species: Iterable[str] | None = None,
         opponent_species: Iterable[str] | None = None,
     ) -> list[HPChangeEvent]:
-        """Mode 1: poll visible slot cards; emit after a 2-frame stable read."""
+        """Mode 1: OCR only when card is visible and HP bar is animating (or mid-track)."""
         display_config = config_for_image(config, image)
+        bar_in_card = _hp_bar_in_card(display_config)
         events: list[HPChangeEvent] = []
 
-        for region_name, side, slot in _SLOT_CARD_REGIONS:
-            crop = crop_region(image, display_config.get(region_name))
-            tracker = self._trackers.setdefault(region_name, HPReadTracker())
+        for card_name, side, slot in _SLOT_CARD_REGIONS:
+            crop = crop_region(image, display_config.get(card_name))
+            tracker = self._trackers.setdefault(card_name, HPReadTracker())
 
-            if not _region_has_content(crop):
+            if not _slot_card_visible(crop):
                 tracker.reset()
+                self._prev_bar_gray.pop(card_name, None)
+                continue
+
+            bar_crop = _crop_hp_bar(crop, bar_in_card)
+            prev_gray = self._prev_bar_gray.get(card_name)
+            bar_moving = _hp_bar_changed(bar_crop, prev_gray)
+            self._prev_bar_gray[card_name] = _downscale_bar_gray(bar_crop)
+
+            # OCR while the bar is moving, or while the stability gate is open.
+            if not bar_moving and not tracker.tracking:
                 continue
 
             reading = parse_slot_card_text(
@@ -164,13 +186,14 @@ class HPReader:
         player_species: Iterable[str] | None = None,
         opponent_species: Iterable[str] | None = None,
     ) -> list[HPChangeEvent]:
-        """Mode 2: authoritative 4-slot read at turn boundary (no stability gate)."""
+        """Mode 2: authoritative 4-slot read at turn boundary (template gate only)."""
         display_config = config_for_image(config, image)
+        bar_in_card = _hp_bar_in_card(display_config)
         events: list[HPChangeEvent] = []
 
-        for region_name, side, slot in _SLOT_CARD_REGIONS:
-            crop = crop_region(image, display_config.get(region_name))
-            if not _region_has_content(crop):
+        for card_name, side, slot in _SLOT_CARD_REGIONS:
+            crop = crop_region(image, display_config.get(card_name))
+            if not _slot_card_visible(crop):
                 continue
 
             reading = parse_slot_card_text(
@@ -183,13 +206,17 @@ class HPReader:
                 continue
 
             # Snapshot becomes the new baseline for animation tracking.
-            tracker = self._trackers.setdefault(region_name, HPReadTracker())
+            tracker = self._trackers.setdefault(card_name, HPReadTracker())
             tracker.species = reading.species
             tracker.prev_frame_hp_pct = reading.hp_pct
             tracker.candidate_hp_pct = reading.hp_pct
             tracker.stable_frames = 0
             tracker.tracking = False
             tracker.committed = True
+
+            self._prev_bar_gray[card_name] = _downscale_bar_gray(
+                _crop_hp_bar(crop, bar_in_card)
+            )
 
             event = _maybe_hp_change_event(
                 reading,
@@ -255,6 +282,7 @@ class HPReader:
                     game_state=game_state,
                 )
                 tracker.committed = True
+                tracker.tracking = False
 
         tracker.prev_frame_hp_pct = hp_pct
         return event
@@ -452,10 +480,70 @@ def _species_matches(known: str, observed: str) -> bool:
     return a == b or a in b or b in a
 
 
-def _region_has_content(crop_rgb: np.ndarray) -> bool:
-    """Brightness/content gate — slot cards are dark panels with light text."""
+@lru_cache(maxsize=1)
+def _slot_card_template() -> np.ndarray | None:
+    """Averaged grayscale of normal + highlighted cards (action_selection.png)."""
+    path = cv_templates_dir() / "slot_card.png"
+    if not path.is_file():
+        return None
+    return np.asarray(Image.open(path).convert("L"), dtype=np.uint8)
+
+
+def _hp_bar_in_card(config: RegionConfig) -> tuple[int, int, int, int]:
+    """Shared card-relative HP bar rect, taken from player_slot_1 calibration."""
+    try:
+        cx, cy, _cw, _ch = config.get("player_slot_1_card")
+        bx, by, bw, bh = config.get("player_slot_1_hp_bar")
+        return (bx - cx, by - cy, bw, bh)
+    except KeyError:
+        return _HP_BAR_IN_CARD_DEFAULT
+
+
+def _crop_hp_bar(card_rgb: np.ndarray, bar_in_card: tuple[int, int, int, int]) -> np.ndarray:
+    """Crop the HP bar from a slot-card crop using the shared relative rect."""
+    x, y, w, h = bar_in_card
+    return card_rgb[y : y + h, x : x + w].copy()
+
+
+def _slot_card_visible(crop_rgb: np.ndarray) -> bool:
+    """True when the shared slot-card template matches (highlight or normal)."""
+    template = _slot_card_template()
+    if template is None:
+        return False
+    # matchTemplate is unstable on near-empty buffers.
+    if float(crop_rgb.mean()) <= _EMPTY_CROP_MEAN_MAX:
+        return False
+
+    prepared = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
+    if prepared.shape != template.shape:
+        template = cv2.resize(template, (prepared.shape[1], prepared.shape[0]))
+    score = cv2.matchTemplate(
+        prepared.astype(np.float32),
+        template.astype(np.float32),
+        cv2.TM_CCOEFF_NORMED,
+    )[0, 0]
+    return float(score) >= _SLOT_CARD_TEMPLATE_SCORE_MIN
+
+
+def _downscale_bar_gray(crop_rgb: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
-    return (
-        float(gray.std()) >= _REGION_CONTENT_STD_MIN
-        and float(gray.mean()) >= _REGION_CONTENT_MEAN_MIN
+    height, width = gray.shape[:2]
+    return cv2.resize(
+        gray,
+        (
+            max(1, width // _HP_BAR_DIFF_DOWNSCALE),
+            max(1, height // _HP_BAR_DIFF_DOWNSCALE),
+        ),
+        interpolation=cv2.INTER_AREA,
     )
+
+
+def _hp_bar_changed(crop_rgb: np.ndarray, previous_gray: np.ndarray | None) -> bool:
+    """Motion gate on the HP-bar ROI only (not the full animated background)."""
+    current_gray = _downscale_bar_gray(crop_rgb)
+    if previous_gray is None:
+        return True
+    if previous_gray.shape != current_gray.shape:
+        return True
+    diff = cv2.absdiff(previous_gray, current_gray)
+    return float(diff.mean()) >= _HP_BAR_DIFF_MEAN_MIN
