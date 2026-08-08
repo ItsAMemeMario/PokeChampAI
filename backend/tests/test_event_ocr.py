@@ -121,6 +121,40 @@ def test_region_has_content_on_active_slot_banner(region_config) -> None:
     assert _region_has_content(empty, "player_slot_2_banner") is False
 
 
+def test_battle_text_content_uses_evidence_region(region_config) -> None:
+    """Short messages fail mean/std on the full OCR crop but pass on evidence."""
+    from pathlib import Path
+
+    events_dir = Path(__file__).resolve().parent / "assets" / "cv" / "events"
+    image = np.asarray(
+        Image.open(events_dir / "player_sends_out_charizard.png").convert("RGB"),
+        dtype=np.uint8,
+    )
+    from app.cv.regions import config_for_image
+
+    display = config_for_image(region_config, image)
+    full = crop_region(image, display.get("battle_text"))
+    evidence = crop_region(image, display.get("battle_text_evidence"))
+
+    assert _region_has_content(full, "battle_text") is False
+    assert _region_has_content(evidence, "battle_text") is True
+
+    engine = EventOcrEngine()
+    with patch("app.cv.event_ocr._ocr_text", return_value="Go! Charizard!") as mock_ocr:
+        events = engine.process_frame(image, region_config)
+    assert mock_ocr.called
+    assert any(event.type == "switch_in" for event in events)
+
+
+def test_battle_text_evidence_rejects_action_selection(region_config) -> None:
+    image = _load_asset("action_selection.png")
+    from app.cv.regions import config_for_image
+
+    display = config_for_image(region_config, image)
+    evidence = crop_region(image, display.get("battle_text_evidence"))
+    assert _region_has_content(evidence, "battle_text") is False
+
+
 @patch("app.cv.event_ocr._ocr_text")
 def test_event_ocr_engine_emits_once_per_region(mock_ocr, region_config) -> None:
     mock_ocr.side_effect = lambda crop, mode="banner": "Staraptor's Intimidate"

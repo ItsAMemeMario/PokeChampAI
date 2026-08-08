@@ -5,10 +5,16 @@
   ],
   "regions": {
     "battle_text": [
-      171,
-      626,
-      1250,
-      145
+      235,
+      650,
+      1050,
+      130
+    ],
+    "battle_text_evidence": [
+      235,
+      650,
+      300,
+      70
     ],
     "fight_button": [
       1401,

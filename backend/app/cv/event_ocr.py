@@ -66,7 +66,14 @@ class EventOcrEngine:
         for region_name, side, slot in _EVENT_REGIONS:
             logger.info("Processing region: %s", region_name)
             crop = crop_region(image, display_config.get(region_name))
-            if not _region_has_content(crop, region_name):
+            # Short battle messages only cover the left of the OCR crop; score content
+            # on a left-anchored evidence region so length does not dilute mean/std.
+            content_crop = (
+                crop_region(image, display_config.get("battle_text_evidence"))
+                if region_name == "battle_text"
+                else crop
+            )
+            if not _region_has_content(content_crop, region_name):
                 logger.info("Region %s has no content", region_name)
                 self._previous_frames.pop(region_name, None)
                 self._last_emitted_text.pop(region_name, None)
@@ -132,6 +139,11 @@ class EventOcrEngine:
 
 
 def _region_has_content(crop_rgb: np.ndarray, region_name: str) -> bool:
+    """Return whether a region crop shows battle UI text worth OCRing.
+
+    For ``battle_text``, callers should pass the ``battle_text_evidence`` crop
+    (left-anchored start of the message), not the full OCR span.
+    """
     if region_name in _BANNER_REGION_NAMES:
         return _banner_has_content(crop_rgb)
     gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)

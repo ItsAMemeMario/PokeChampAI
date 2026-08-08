@@ -60,6 +60,7 @@ REGION_COLORS: dict[str, tuple[int, int, int]] = {
     "opponent_slot_1_banner": (128, 128, 255),
     "opponent_slot_2_banner": (80, 80, 255),
     "battle_text": (255, 255, 0),
+    "battle_text_evidence": (255, 220, 0),
     "action_selection_standby": (255, 180, 0),
 }
 
