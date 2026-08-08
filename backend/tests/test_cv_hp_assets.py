@@ -94,22 +94,26 @@ def test_charizard_100_grimmsnarl_100_staraptor_100_whimsicott_100(region_config
         assert reading.hp_pct == expected_reading.hp_pct, region_name
 
 
-def test_staraptor_0_whimsicott_1(region_config) -> None:
-    """Animation frame: opponent faint/low HP; player slot cards absent."""
-    image = _load_hp_asset("staraptor_0_whimsicott_1.png")
+def test_grimmsnarl_53_musharna_41_metagross_67(region_config) -> None:
+    """Varying amounts of HP; one player slot card absent."""
+    image = _load_hp_asset("grimmsnarl_53_musharna_41_metagross_67.png")
     expected = {
         "player_slot_1_card": None,
-        "player_slot_2_card": None,
+        "player_slot_2_card": SlotCardRead(
+            species="Grimmsnarl",
+            hp_pct=53,
+            raw_text="Grimmsnarl 106/199",
+        ),
         # Config places opponent slot 1 on the right (far) card.
         "opponent_slot_1_card": SlotCardRead(
-            species="Staraptor",
-            hp_pct=0,
-            raw_text="Staraptor 0%",
+            species="Musharna",
+            hp_pct=41,
+            raw_text="Musharna 41%",
         ),
         "opponent_slot_2_card": SlotCardRead(
-            species="Whimsicott",
-            hp_pct=1,
-            raw_text="Whimsicott 1%",
+            species="Metagross",
+            hp_pct=67,
+            raw_text="Metagross 67%",
         ),
     }
 
@@ -127,6 +131,6 @@ def test_all_hp_assets_are_covered() -> None:
     on_disk = {path.name for path in _hp_assets_dir().glob("*.png")}
     assert on_disk == {
         "charizard_100_grimmsnarl_100_staraptor_100_whimsicott_100.png",
-        "staraptor_0_whimsicott_1.png",
+        "grimmsnarl_53_musharna_41_metagross_67.png",
         "staraptor_58_garchomp_100_delphox_2_aerodactyl_38.png",
     }

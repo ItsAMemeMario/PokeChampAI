@@ -39,9 +39,10 @@ _EMPTY_CROP_MEAN_MAX = 5.0
 # HP-bar motion on the in-card bar crop only.
 _HP_BAR_DIFF_DOWNSCALE = 4
 _HP_BAR_DIFF_MEAN_MIN = 3.0
-# Keep near-gray + bright pixels (white name/HP text); drop colored bar/chrome.
-_SLOT_CARD_CHROMA_MAX = 25
-_SLOT_CARD_BRIGHT_MIN = 160
+# Keep low-saturation bright pixels (white name/HP text); drop colored bar/FX.
+# HSV saturation rejects yellow/green battle glow better than RGB chroma.
+_SLOT_CARD_SAT_MAX = 50
+_SLOT_CARD_VALUE_MIN = 180
 _SLOT_CARD_OCR_UPSCALE = 2.0
 
 # Player cards: "162 / 162" or "162/162"
@@ -376,20 +377,21 @@ def _normalize_slot_ocr_text(text: str, side: Side) -> str:
 
 
 def _ocr_slot_card_text(crop_rgb: np.ndarray) -> str:
-    """OCR a slot-card crop after near-gray + bright masking."""
+    """OCR a slot-card crop after low-saturation + bright masking."""
     prepared = _preprocess_slot_card_for_ocr(crop_rgb)
     lines = read_text(prepared, detail=0, paragraph=True)
     return " ".join(lines).strip()
 
 
 def _preprocess_slot_card_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
-    """Mask to near-gray bright text, then 2× upscale for EasyOCR."""
-    r = crop_rgb[:, :, 0].astype(np.int16)
-    g = crop_rgb[:, :, 1].astype(np.int16)
-    b = crop_rgb[:, :, 2].astype(np.int16)
-    chroma = np.maximum(np.maximum(r, g), b) - np.minimum(np.minimum(r, g), b)
-    brightness = (r + g + b) // 3
-    keep = (chroma <= _SLOT_CARD_CHROMA_MAX) & (brightness >= _SLOT_CARD_BRIGHT_MIN)
+    """Mask to low-saturation bright text, then 2× upscale for EasyOCR.
+
+    RGB chroma lets yellow/green battle FX through and corrupts species glyphs
+    (e.g. Grimmsnarl → Guimgsowi). HSV saturation drops that glow while keeping
+    white name/HP digits.
+    """
+    hsv = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2HSV)
+    keep = (hsv[:, :, 1] <= _SLOT_CARD_SAT_MAX) & (hsv[:, :, 2] >= _SLOT_CARD_VALUE_MIN)
 
     masked = np.zeros(crop_rgb.shape[:2], dtype=np.uint8)
     masked[keep] = 255
