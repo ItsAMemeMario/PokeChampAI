@@ -15,6 +15,13 @@ from app.schema.team import PlayerPokemon, PlayerTeam
 from app.services.cv_runner import _process_battle_animation_events
 from app.services.session import SessionStore
 
+try:
+    import torch
+
+    _CUDA_AVAILABLE = bool(torch.cuda.is_available())
+except Exception:  # pragma: no cover
+    _CUDA_AVAILABLE = False
+
 
 def _sample_team() -> PlayerTeam:
     return PlayerTeam(
@@ -204,6 +211,7 @@ def test_process_battle_animation_events_appends_to_session(mock_ocr, region_con
     assert store.battle_logs[1][1].pokemon.slot == 2
 
 
+@pytest.mark.skipif(not _CUDA_AVAILABLE, reason="CUDA required for EasyOCR")
 def test_event_ocr_on_reference_screenshots(region_config) -> None:
     """End-to-end OCR on calibration assets (requires EasyOCR)."""
     engine = EventOcrEngine()

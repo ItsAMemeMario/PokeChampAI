@@ -11,12 +11,16 @@ from PIL import Image
 from app.cv.hp_reader import (
     HPReader,
     SlotCardRead,
+    _HP_BAR_IN_CARD_DEFAULT,
+    _crop_hp_bar,
+    _downscale_bar_gray,
+    _hp_bar_changed,
     _hp_bar_in_card,
     parse_slot_card_text,
     read_slot_card,
     _slot_card_visible,
 )
-from app.cv.regions import crop_region, default_assets_dir, load_regions
+from app.cv.regions import RegionConfig, crop_region, default_assets_dir, load_regions
 from app.schema.gamestate import (
     ActivePokemon,
     FieldState,
@@ -32,6 +36,13 @@ from app.services.cv_runner import (
 )
 from app.schema.battle_log import TurnStartEvent
 from app.services.session import SessionStore
+
+try:
+    import torch
+
+    _CUDA_AVAILABLE = bool(torch.cuda.is_available())
+except Exception:  # pragma: no cover
+    _CUDA_AVAILABLE = False
 
 
 def _open_turn(store: SessionStore, turn: int = 1) -> None:
@@ -163,6 +174,22 @@ def test_parse_opponent_percent_hp() -> None:
     assert reading.raw_text == "Hatterene 47%"
 
 
+def _mask_other_cards(image: np.ndarray, region_config, keep: str) -> np.ndarray:
+    masked = image.copy()
+    for name in (
+        "player_slot_1_card",
+        "player_slot_2_card",
+        "opponent_slot_1_card",
+        "opponent_slot_2_card",
+    ):
+        if name == keep:
+            continue
+        x, y, w, h = region_config.get(name)
+        masked[y : y + h, x : x + w] = 0
+    return masked
+
+
+@pytest.mark.skipif(not _CUDA_AVAILABLE, reason="CUDA required for EasyOCR")
 def test_ocr_action_selection_slot_cards(region_config) -> None:
     """End-to-end EasyOCR on action_selection.png slot cards."""
     image = _load_asset("action_selection.png")
@@ -209,20 +236,101 @@ def test_slot_card_visible_on_action_selection_cards(region_config) -> None:
     assert _slot_card_visible(empty) is False
 
 
+def test_hp_bar_in_card_uses_calibrated_offset(region_config) -> None:
+    assert _hp_bar_in_card(region_config) == (17, 48, 195, 26)
+    empty_config = RegionConfig(resolution=(1600, 900), regions={})
+    assert _hp_bar_in_card(empty_config) == _HP_BAR_IN_CARD_DEFAULT
+
+
+def test_hp_bar_changed_detects_motion(region_config) -> None:
+    image = _load_asset("action_selection.png")
+    card = crop_region(image, region_config.get("player_slot_1_card"))
+    bar = _crop_hp_bar(card, _hp_bar_in_card(region_config))
+    prev = _downscale_bar_gray(bar)
+
+    assert _hp_bar_changed(bar, None) is True
+    assert _hp_bar_changed(bar, prev) is False
+
+    moved = bar.copy()
+    moved[:] = np.clip(moved.astype(np.int16) + 40, 0, 255).astype(np.uint8)
+    assert _hp_bar_changed(moved, prev) is True
+
+
+@patch("app.cv.hp_reader._ocr_slot_card_text")
+def test_animation_skips_ocr_when_template_misses(mock_ocr, region_config) -> None:
+    """Invisible / empty card crop must not OCR."""
+    mock_ocr.return_value = "Sinistcha 178/178"
+    image = _load_asset("action_selection.png")
+    empty = np.zeros_like(image)
+    reader = HPReader()
+    assert reader.process_animation_frame(empty, region_config, None) == []
+    mock_ocr.assert_not_called()
+
+
+@patch("app.cv.hp_reader._ocr_slot_card_text")
+def test_animation_skips_ocr_when_bar_idle(mock_ocr, region_config) -> None:
+    """Unchanged HP bar must not OCR again while not tracking."""
+    mock_ocr.return_value = "Sinistcha 178/178"
+    image = _load_asset("action_selection.png")
+    masked = _mask_other_cards(image, region_config, "player_slot_1_card")
+    reader = HPReader()
+    card = "player_slot_1_card"
+
+    reader.process_animation_frame(
+        _with_bar_motion(masked, region_config, card, 1),
+        region_config,
+        None,
+    )
+    assert mock_ocr.call_count == 1
+
+    # Settling from nudged → clean bar is one more motion sample.
+    reader.process_animation_frame(masked, region_config, None)
+    assert mock_ocr.call_count == 2
+
+    # Identical frames afterward: no motion, tracking closed → skip OCR.
+    reader.process_animation_frame(masked, region_config, None)
+    reader.process_animation_frame(masked, region_config, None)
+    assert mock_ocr.call_count == 2
+
+
+@patch("app.cv.hp_reader._ocr_slot_card_text")
+def test_animation_ocrs_when_visible_and_bar_moves(mock_ocr, region_config) -> None:
+    mock_ocr.return_value = "Sinistcha 178/178"
+    image = _load_asset("action_selection.png")
+    masked = _mask_other_cards(image, region_config, "player_slot_1_card")
+    reader = HPReader()
+    card = "player_slot_1_card"
+
+    reader.process_animation_frame(
+        _with_bar_motion(masked, region_config, card, 1),
+        region_config,
+        None,
+    )
+    reader.process_animation_frame(
+        _with_bar_motion(masked, region_config, card, 2),
+        region_config,
+        None,
+    )
+    assert mock_ocr.call_count == 2
+
+
+@patch("app.cv.hp_reader._ocr_slot_card_text")
+def test_action_selection_snapshot_ocrs_without_bar_motion(mock_ocr, region_config) -> None:
+    """Snapshot is template-gated only (no motion requirement)."""
+    mock_ocr.return_value = "Staraptor 162/162"
+    image = _load_asset("action_selection.png")
+    masked = _mask_other_cards(image, region_config, "player_slot_1_card")
+    reader = HPReader()
+    reader.read_action_selection_snapshot(masked, region_config, None)
+    assert mock_ocr.call_count == 1
+
+
 @patch("app.cv.hp_reader._ocr_slot_card_text")
 def test_stability_gate_emits_delta_vs_game_state(mock_ocr, region_config) -> None:
     """Start on inter-frame change; commit after 2 stable frames; delta vs GameState."""
     mock_ocr.return_value = "Sinistcha 178/178"
     image = _load_asset("action_selection.png")
-    # Mask all but player_slot_1_card so only one tracker advances.
-    masked = image.copy()
-    for name in (
-        "player_slot_2_card",
-        "opponent_slot_1_card",
-        "opponent_slot_2_card",
-    ):
-        x, y, w, h = region_config.get(name)
-        masked[y : y + h, x : x + w] = 0
+    masked = _mask_other_cards(image, region_config, "player_slot_1_card")
 
     game_state = _game_state(player_slot_1=_active("Sinistcha", 100))
     reader = HPReader()
@@ -268,14 +376,7 @@ def test_stability_gate_emits_delta_vs_game_state(mock_ocr, region_config) -> No
 def test_stability_gate_resets_when_value_keeps_changing(mock_ocr, region_config) -> None:
     mock_ocr.return_value = "Hatterene 100%"
     image = _load_asset("action_selection.png")
-    masked = image.copy()
-    for name in (
-        "player_slot_1_card",
-        "player_slot_2_card",
-        "opponent_slot_1_card",
-    ):
-        x, y, w, h = region_config.get(name)
-        masked[y : y + h, x : x + w] = 0
+    masked = _mask_other_cards(image, region_config, "opponent_slot_2_card")
 
     game_state = _game_state(opponent_slot_2=_active("Hatterene", 100))
     reader = HPReader()
@@ -311,14 +412,7 @@ def test_stability_gate_resets_when_value_keeps_changing(mock_ocr, region_config
 def test_empty_region_resets_tracker(mock_ocr, region_config) -> None:
     mock_ocr.return_value = "Sinistcha 178/178"
     image = _load_asset("action_selection.png")
-    masked = image.copy()
-    for name in (
-        "player_slot_2_card",
-        "opponent_slot_1_card",
-        "opponent_slot_2_card",
-    ):
-        x, y, w, h = region_config.get(name)
-        masked[y : y + h, x : x + w] = 0
+    masked = _mask_other_cards(image, region_config, "player_slot_1_card")
 
     game_state = _game_state(player_slot_1=_active("Sinistcha", 100))
     reader = HPReader()
@@ -354,14 +448,7 @@ def test_empty_region_resets_tracker(mock_ocr, region_config) -> None:
 def test_action_selection_snapshot_emits_drift(mock_ocr, region_config) -> None:
     mock_ocr.return_value = "Milotic 85%"
     image = _load_asset("action_selection.png")
-    masked = image.copy()
-    for name in (
-        "player_slot_1_card",
-        "player_slot_2_card",
-        "opponent_slot_2_card",
-    ):
-        x, y, w, h = region_config.get(name)
-        masked[y : y + h, x : x + w] = 0
+    masked = _mask_other_cards(image, region_config, "opponent_slot_1_card")
 
     game_state = _game_state(opponent_slot_1=_active("Milotic", 100))
     reader = HPReader()
@@ -378,14 +465,7 @@ def test_action_selection_snapshot_emits_drift(mock_ocr, region_config) -> None:
 def test_cv_runner_appends_hp_events(mock_ocr, region_config) -> None:
     mock_ocr.return_value = "Sinistcha 178/178"
     image = _load_asset("action_selection.png")
-    masked = image.copy()
-    for name in (
-        "player_slot_2_card",
-        "opponent_slot_1_card",
-        "opponent_slot_2_card",
-    ):
-        x, y, w, h = region_config.get(name)
-        masked[y : y + h, x : x + w] = 0
+    masked = _mask_other_cards(image, region_config, "player_slot_1_card")
 
     store = SessionStore()
     store.game_state = _game_state(player_slot_1=_active("Sinistcha", 100))
@@ -417,15 +497,7 @@ def test_cv_runner_appends_hp_events(mock_ocr, region_config) -> None:
 def test_cv_runner_snapshot_helper(mock_ocr, region_config) -> None:
     mock_ocr.return_value = "Staraptor 81/162"
     image = _load_asset("action_selection.png")
-    # Zero other cards so a single mock return is enough.
-    masked = image.copy()
-    for name in (
-        "player_slot_2_card",
-        "opponent_slot_1_card",
-        "opponent_slot_2_card",
-    ):
-        x, y, w, h = region_config.get(name)
-        masked[y : y + h, x : x + w] = 0
+    masked = _mask_other_cards(image, region_config, "player_slot_1_card")
 
     store = SessionStore()
     store.game_state = _game_state(player_slot_1=_active("Staraptor", 100))

@@ -11,6 +11,18 @@ from PIL import Image
 from app.cv.hp_reader import SlotCardRead, read_slot_card
 from app.cv.regions import load_regions
 
+try:
+    import torch
+
+    _CUDA_AVAILABLE = bool(torch.cuda.is_available())
+except Exception:  # pragma: no cover
+    _CUDA_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(
+    not _CUDA_AVAILABLE,
+    reason="CUDA required for EasyOCR",
+)
+
 
 def _hp_assets_dir() -> Path:
     return Path(__file__).resolve().parent / "assets" / "cv" / "hp"

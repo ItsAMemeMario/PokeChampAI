@@ -13,6 +13,18 @@ from app.cv.phase_detector import has_battle_ended
 from app.cv.regions import config_for_image, load_regions
 from app.schema.battle_log import BattleLogEvent
 
+try:
+    import torch
+
+    _CUDA_AVAILABLE = bool(torch.cuda.is_available())
+except Exception:  # pragma: no cover
+    _CUDA_AVAILABLE = False
+
+pytestmark = pytest.mark.skipif(
+    not _CUDA_AVAILABLE,
+    reason="CUDA required for EasyOCR",
+)
+
 
 def _events_assets_dir() -> Path:
     return Path(__file__).resolve().parent / "assets" / "cv" / "events"
