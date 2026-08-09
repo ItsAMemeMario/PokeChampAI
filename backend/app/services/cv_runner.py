@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+
+import numpy as np
 
 from app.cv.adb_capture import capture_screenshot, is_adb_connected
 from app.cv.event_ocr import EventOcrEngine
@@ -33,6 +36,7 @@ _TEAM_SELECTED_POLL_SEC = 1.0
 _ACTION_SELECTION_POLL_SEC = 1.0 / 5.0  # 5 FPS — catch brief "Communicating..." standby
 _BATTLE_ANIMATION_POLL_SEC = 1.0 / 3.0  # 3 FPS — HP reader + event OCR
 _DEFAULT_POLL_SEC = 0.5
+_FRAME_WAIT_TIMEOUT_SEC = 1.0
 
 
 def _poll_interval(phase: BattlePhase) -> float:
@@ -46,6 +50,23 @@ def _poll_interval(phase: BattlePhase) -> float:
         return _ACTION_SELECTION_POLL_SEC
     return _DEFAULT_POLL_SEC
 
+
+async def _put_latest_frame(queue: asyncio.Queue[np.ndarray], frame: np.ndarray) -> None:
+    """Keep only the newest frame (bounded slot of size 1)."""
+    if queue.full():
+        try:
+            queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+    await queue.put(frame)
+
+
+def _set_adb_connected(store: SessionStore, connected: bool) -> None:
+    previous = store.adb_connected
+    store.adb_connected = connected
+    if connected != previous:
+        logger.info("ADB connected: %s", connected)
+        publish_session(store)
 
 async def _process_team_preview_entry(store: SessionStore, frame) -> None:
     """Crop opponent sprites, identify six species, and request bring suggestions."""
@@ -252,106 +273,174 @@ async def _process_turn_suggestion(store: SessionStore) -> None:
         store.gemini_interaction_id = gemini.interaction_id
 
 
+async def _capture_worker(
+    store: SessionStore,
+    frame_queue: asyncio.Queue[np.ndarray],
+) -> None:
+    """Capture screenshots continuously; keep only the newest frame in the queue."""
+    while store.cv_running:
+        if not store.adb_connected:
+            await asyncio.sleep(_ADB_PROBE_INTERVAL_SEC)
+            continue
+        try:
+            frame = await asyncio.to_thread(capture_screenshot)
+        except RuntimeError as exc:
+            logger.debug("Screenshot capture failed: %s", exc)
+            _set_adb_connected(store, False)
+            # Drop any stale frame so process waits for a fresh reconnect capture.
+            while not frame_queue.empty():
+                try:
+                    frame_queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            await asyncio.sleep(_ADB_PROBE_INTERVAL_SEC)
+            continue
+        await _put_latest_frame(frame_queue, frame)
+
+
+async def _maybe_probe_adb(store: SessionStore, last_probe_at: float) -> float:
+    """Probe ADB at most every ``_ADB_PROBE_INTERVAL_SEC``; return updated timestamp."""
+    now = time.monotonic()
+    if now - last_probe_at < _ADB_PROBE_INTERVAL_SEC:
+        return last_probe_at
+    connected = await asyncio.to_thread(is_adb_connected)
+    _set_adb_connected(store, connected)
+    return now
+
+
+async def _process_frame(
+    store: SessionStore,
+    frame: np.ndarray,
+    *,
+    detector: PhaseDetector,
+    event_ocr: EventOcrEngine,
+    hp_reader: HPReader,
+    region_config,
+) -> BattlePhase:
+    """Run phase detection + phase handlers for one frame; return current phase."""
+    transition = detector.detect_transition(frame)
+    previous_phase = store.phase
+    store.phase = transition.current
+
+    if store.phase != previous_phase:
+        publish_phase(store)
+
+    if transition.entered_team_preview:
+        store.begin_battle()
+        await _process_team_preview_entry(store, frame)
+
+    if transition.current == BattlePhase.TEAM_SELECTED:
+        await asyncio.to_thread(
+            _process_team_selected_frame,
+            store,
+            frame,
+            region_config,
+        )
+
+    if transition.entered_battle:
+        ensure_seeded(store)
+        publish_state(store)
+
+    if transition.entered_action_selection:
+        _emit_turn_start_on_action_selection_entry(store)
+        await asyncio.to_thread(
+            _process_hp_action_selection_snapshot,
+            store,
+            frame,
+            hp_reader,
+            region_config,
+        )
+        await _process_turn_suggestion(store)
+
+    if transition.current == BattlePhase.BATTLE_ANIMATION:
+        player_species = store.player_selected_species
+        opponent_species = store.opponent_team_species
+        game_state = store.game_state
+        event_events, hp_events = await asyncio.gather(
+            asyncio.to_thread(
+                _collect_battle_animation_events,
+                frame,
+                event_ocr,
+                region_config,
+                player_species=player_species,
+                opponent_species=opponent_species,
+            ),
+            asyncio.to_thread(
+                _collect_hp_animation_events,
+                frame,
+                hp_reader,
+                region_config,
+                game_state,
+                player_species=player_species,
+                opponent_species=opponent_species,
+            ),
+        )
+        # Append on the event loop thread so SessionStore stays single-threaded.
+        _append_battle_animation_events(store, event_events)
+        _append_hp_events(store, hp_events)
+    else:
+        event_ocr.reset()
+        if transition.current not in (
+            BattlePhase.ACTION_SELECTION,
+            BattlePhase.BATTLE_ANIMATION,
+        ):
+            hp_reader.reset()
+
+    return transition.current
+
+
 async def _cv_loop(store: SessionStore) -> None:
     logger.info("CV loop started")
     detector = PhaseDetector()
     event_ocr = EventOcrEngine()
     hp_reader = HPReader()
     region_config = load_regions()
+    frame_queue: asyncio.Queue[np.ndarray] = asyncio.Queue(maxsize=1)
+    capture_task = asyncio.create_task(
+        _capture_worker(store, frame_queue),
+        name="cv-capture",
+    )
+    last_adb_probe_at = 0.0
     try:
         while store.cv_running:
-            previous_adb = store.adb_connected
-            store.adb_connected = await asyncio.to_thread(is_adb_connected)
-            logger.info("ADB connected: %s", store.adb_connected)
-            if store.adb_connected != previous_adb:
-                publish_session(store)
+            last_adb_probe_at = await _maybe_probe_adb(store, last_adb_probe_at)
             if not store.adb_connected:
-                logger.debug("ADB not connected; retrying in %.0fs", _ADB_PROBE_INTERVAL_SEC)
+                logger.debug(
+                    "ADB not connected; retrying in %.0fs",
+                    _ADB_PROBE_INTERVAL_SEC,
+                )
                 await asyncio.sleep(_ADB_PROBE_INTERVAL_SEC)
                 continue
 
             try:
-                frame = await asyncio.to_thread(capture_screenshot)
-            except RuntimeError as exc:
-                logger.debug("Screenshot capture failed: %s", exc)
-                if store.adb_connected:
-                    store.adb_connected = False
-                    publish_session(store)
-                await asyncio.sleep(_ADB_PROBE_INTERVAL_SEC)
+                frame = await asyncio.wait_for(
+                    frame_queue.get(),
+                    timeout=_FRAME_WAIT_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                # Capture may be stalled; re-probe on the next iteration.
                 continue
 
-            transition = detector.detect_transition(frame)
-            previous_phase = store.phase
-            store.phase = transition.current
-
-            if store.phase != previous_phase:
-                publish_phase(store)
-
-            if transition.entered_team_preview:
-                store.begin_battle()
-                await _process_team_preview_entry(store, frame)
-
-            if transition.current == BattlePhase.TEAM_SELECTED:
-                await asyncio.to_thread(
-                    _process_team_selected_frame,
-                    store,
-                    frame,
-                    region_config,
-                )
-
-            if transition.entered_battle:
-                ensure_seeded(store)
-                publish_state(store)
-
-            if transition.entered_action_selection:
-                _emit_turn_start_on_action_selection_entry(store)
-                await asyncio.to_thread(
-                    _process_hp_action_selection_snapshot,
-                    store,
-                    frame,
-                    hp_reader,
-                    region_config,
-                )
-                await _process_turn_suggestion(store)
-
-            if transition.current == BattlePhase.BATTLE_ANIMATION:
-                player_species = store.player_selected_species
-                opponent_species = store.opponent_team_species
-                game_state = store.game_state
-                event_events, hp_events = await asyncio.gather(
-                    asyncio.to_thread(
-                        _collect_battle_animation_events,
-                        frame,
-                        event_ocr,
-                        region_config,
-                        player_species=player_species,
-                        opponent_species=opponent_species,
-                    ),
-                    asyncio.to_thread(
-                        _collect_hp_animation_events,
-                        frame,
-                        hp_reader,
-                        region_config,
-                        game_state,
-                        player_species=player_species,
-                        opponent_species=opponent_species,
-                    ),
-                )
-                # Append on the event loop thread so SessionStore stays single-threaded.
-                _append_battle_animation_events(store, event_events)
-                _append_hp_events(store, hp_events)
-            else:
-                event_ocr.reset()
-                if transition.current not in (
-                    BattlePhase.ACTION_SELECTION,
-                    BattlePhase.BATTLE_ANIMATION,
-                ):
-                    hp_reader.reset()
-
-            await asyncio.sleep(_poll_interval(transition.current))
+            loop_started = time.perf_counter()
+            phase = await _process_frame(
+                store,
+                frame,
+                detector=detector,
+                event_ocr=event_ocr,
+                hp_reader=hp_reader,
+                region_config=region_config,
+            )
+            elapsed = time.perf_counter() - loop_started
+            await asyncio.sleep(max(0.0, _poll_interval(phase) - elapsed))
     except asyncio.CancelledError:
         logger.info("CV loop stopped")
         raise
+    finally:
+        capture_task.cancel()
+        try:
+            await capture_task
+        except asyncio.CancelledError:
+            pass
 
 
 def start_cv(store: SessionStore) -> None:
