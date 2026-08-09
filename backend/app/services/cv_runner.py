@@ -91,22 +91,79 @@ def _process_team_selected_frame(store: SessionStore, frame, config) -> None:
     logger.info("Player selected bring: %s", ", ".join(selected))
 
 
+def _collect_battle_animation_events(
+    frame,
+    event_ocr: EventOcrEngine,
+    config,
+    *,
+    player_species,
+    opponent_species,
+):
+    """OCR changed banners/battle text; return events (do not touch SessionStore)."""
+    logger.info("Processing battle animation events")
+    return event_ocr.process_frame(
+        frame,
+        config,
+        player_species=player_species,
+        opponent_species=opponent_species,
+    )
+
+
+def _collect_hp_animation_events(
+    frame,
+    hp_reader: HPReader,
+    config,
+    game_state,
+    *,
+    player_species,
+    opponent_species,
+):
+    """Poll slot cards; return stable HPChangeEvents (do not touch SessionStore)."""
+    logger.info("Processing HP animation frame")
+    return hp_reader.process_animation_frame(
+        frame,
+        config,
+        game_state,
+        player_species=player_species,
+        opponent_species=opponent_species,
+    )
+
+
+def _append_battle_animation_events(store: SessionStore, events) -> None:
+    for event in events:
+        store.append_battle_log(event)
+        logger.info("Battle log event: %s — %r", event.type, event.raw_text)
+
+
+def _append_hp_events(store: SessionStore, events, *, snapshot: bool = False) -> None:
+    label = "HP snapshot reconcile" if snapshot else "HP change"
+    for event in events:
+        store.append_battle_log(event)
+        logger.info(
+            "%s: %s slot %s %+d%% — %r",
+            label,
+            event.pokemon.side,
+            event.pokemon.slot,
+            event.hp_pct_change,
+            event.raw_text,
+        )
+
+
 def _process_battle_animation_events(
     store: SessionStore,
     frame,
     event_ocr: EventOcrEngine,
     config,
 ) -> None:
-    """OCR changed per-slot banners and battle text, appending parsed events."""
-    logger.info("Processing battle animation events")
-    for event in event_ocr.process_frame(
+    """OCR changed regions and append parsed events (sync helper for tests)."""
+    events = _collect_battle_animation_events(
         frame,
+        event_ocr,
         config,
         player_species=store.player_selected_species,
         opponent_species=store.opponent_team_species,
-    ):
-        store.append_battle_log(event)
-        logger.info("Battle log event: %s — %r", event.type, event.raw_text)
+    )
+    _append_battle_animation_events(store, events)
 
 
 def _process_hp_animation_frame(
@@ -115,23 +172,16 @@ def _process_hp_animation_frame(
     hp_reader: HPReader,
     config,
 ) -> None:
-    """Poll slot cards at animation FPS; append stable HPChangeEvents."""
-    logger.info("Processing HP animation frame")
-    for event in hp_reader.process_animation_frame(
+    """Poll slot cards and append HP events (sync helper for tests)."""
+    events = _collect_hp_animation_events(
         frame,
+        hp_reader,
         config,
         store.game_state,
         player_species=store.player_selected_species,
         opponent_species=store.opponent_team_species,
-    ):
-        store.append_battle_log(event)
-        logger.info(
-            "HP change: %s slot %s %+d%% — %r",
-            event.pokemon.side,
-            event.pokemon.slot,
-            event.hp_pct_change,
-            event.raw_text,
-        )
+    )
+    _append_hp_events(store, events)
 
 
 def _process_hp_action_selection_snapshot(
@@ -142,21 +192,14 @@ def _process_hp_action_selection_snapshot(
 ) -> None:
     """Authoritative 4-slot HP snapshot on action_selection entry."""
     logger.info("Processing HP action selection snapshot")
-    for event in hp_reader.read_action_selection_snapshot(
+    events = hp_reader.read_action_selection_snapshot(
         frame,
         config,
         store.game_state,
         player_species=store.player_selected_species,
         opponent_species=store.opponent_team_species,
-    ):
-        store.append_battle_log(event)
-        logger.info(
-            "HP snapshot reconcile: %s slot %s %+d%% — %r",
-            event.pokemon.side,
-            event.pokemon.slot,
-            event.hp_pct_change,
-            event.raw_text,
-        )
+    )
+    _append_hp_events(store, events, snapshot=True)
 
 
 def _emit_turn_start_on_action_selection_entry(store: SessionStore) -> None:
@@ -272,20 +315,31 @@ async def _cv_loop(store: SessionStore) -> None:
                 await _process_turn_suggestion(store)
 
             if transition.current == BattlePhase.BATTLE_ANIMATION:
-                await asyncio.to_thread(
-                    _process_battle_animation_events,
-                    store,
-                    frame,
-                    event_ocr,
-                    region_config,
+                player_species = store.player_selected_species
+                opponent_species = store.opponent_team_species
+                game_state = store.game_state
+                event_events, hp_events = await asyncio.gather(
+                    asyncio.to_thread(
+                        _collect_battle_animation_events,
+                        frame,
+                        event_ocr,
+                        region_config,
+                        player_species=player_species,
+                        opponent_species=opponent_species,
+                    ),
+                    asyncio.to_thread(
+                        _collect_hp_animation_events,
+                        frame,
+                        hp_reader,
+                        region_config,
+                        game_state,
+                        player_species=player_species,
+                        opponent_species=opponent_species,
+                    ),
                 )
-                await asyncio.to_thread(
-                    _process_hp_animation_frame,
-                    store,
-                    frame,
-                    hp_reader,
-                    region_config,
-                )
+                # Append on the event loop thread so SessionStore stays single-threaded.
+                _append_battle_animation_events(store, event_events)
+                _append_hp_events(store, hp_events)
             else:
                 event_ocr.reset()
                 if transition.current not in (

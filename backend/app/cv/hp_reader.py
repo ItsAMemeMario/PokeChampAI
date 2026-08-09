@@ -12,7 +12,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from app.cv.ocr_reader import read_text
+from app.cv.ocr_reader import map_parallel, read_text
 from app.cv.regions import RegionConfig, config_for_image, crop_region, cv_templates_dir
 from app.schema.battle_log import HPChangeEvent
 from app.schema.common import Pokemon, Side, Slot
@@ -137,6 +137,7 @@ class HPReader:
         display_config = config_for_image(config, image)
         bar_in_card = _hp_bar_in_card(display_config)
         events: list[HPChangeEvent] = []
+        ocr_jobs: list[tuple[str, Side, Slot, np.ndarray]] = []
 
         for card_name, side, slot in _SLOT_CARD_REGIONS:
             crop = crop_region(image, display_config.get(card_name))
@@ -156,8 +157,13 @@ class HPReader:
             if not bar_moving and not tracker.tracking:
                 continue
 
+            ocr_jobs.append((card_name, side, slot, crop))
+
+        texts = map_parallel(_ocr_slot_card_text, [crop for *_, crop in ocr_jobs])
+        for (card_name, side, slot, _crop), text in zip(ocr_jobs, texts, strict=True):
+            tracker = self._trackers.setdefault(card_name, HPReadTracker())
             reading = parse_slot_card_text(
-                _ocr_slot_card_text(crop),
+                text,
                 side,
                 player_species=player_species,
                 opponent_species=opponent_species,
@@ -191,14 +197,18 @@ class HPReader:
         display_config = config_for_image(config, image)
         bar_in_card = _hp_bar_in_card(display_config)
         events: list[HPChangeEvent] = []
+        ocr_jobs: list[tuple[str, Side, Slot, np.ndarray]] = []
 
         for card_name, side, slot in _SLOT_CARD_REGIONS:
             crop = crop_region(image, display_config.get(card_name))
             if not _slot_card_visible(crop):
                 continue
+            ocr_jobs.append((card_name, side, slot, crop))
 
+        texts = map_parallel(_ocr_slot_card_text, [crop for *_, crop in ocr_jobs])
+        for (card_name, side, slot, crop), text in zip(ocr_jobs, texts, strict=True):
             reading = parse_slot_card_text(
-                _ocr_slot_card_text(crop),
+                text,
                 side,
                 player_species=player_species,
                 opponent_species=opponent_species,

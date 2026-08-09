@@ -51,3 +51,9 @@ def test_read_text_uses_lock_and_reader(monkeypatch: pytest.MonkeyPatch) -> None
     mock_reader.readtext.assert_called_once()
     assert mock_reader.readtext.call_args.kwargs["detail"] == 0
     assert mock_reader.readtext.call_args.kwargs["paragraph"] is True
+
+
+def test_map_parallel_preserves_order() -> None:
+    assert ocr_reader.map_parallel(lambda x: x * 2, []) == []
+    assert ocr_reader.map_parallel(lambda x: x * 2, [3]) == [6]
+    assert ocr_reader.map_parallel(lambda x: x * 2, [1, 2, 3, 4]) == [2, 4, 6, 8]

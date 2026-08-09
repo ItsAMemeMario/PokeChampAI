@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from app.cv.event_parser import parse_battle_text, parse_side_banner
-from app.cv.ocr_reader import read_text
+from app.cv.ocr_reader import map_parallel, read_text
 from app.cv.regions import RegionConfig, config_for_image, crop_region
 from app.schema.battle_log import BattleLogEvent
 from app.schema.common import Side, Slot
@@ -40,6 +40,15 @@ _BATTLE_TEXT_OCR_UPSCALE = 2.0
 
 
 @dataclass
+class _OcrJob:
+    region_name: str
+    side: Side | None
+    slot: Slot | None
+    crop: np.ndarray
+    mode: str
+
+
+@dataclass
 class EventOcrEngine:
     """Stateful OCR over per-slot banners and battle text with frame diffing."""
 
@@ -61,7 +70,7 @@ class EventOcrEngine:
     ) -> list[BattleLogEvent]:
         """OCR changed event regions and return parsed battle log events."""
         display_config = config_for_image(config, image)
-        events: list[BattleLogEvent] = []
+        jobs: list[_OcrJob] = []
 
         for region_name, side, slot in _EVENT_REGIONS:
             logger.info("Processing region: %s", region_name)
@@ -85,27 +94,30 @@ class EventOcrEngine:
 
             self._previous_frames[region_name] = _downscale_gray(crop)
             mode = "battle_text" if region_name == "battle_text" else "banner"
-            text = _ocr_text(crop, mode=mode)
+            jobs.append(_OcrJob(region_name, side, slot, crop, mode))
+
+        texts = map_parallel(_run_ocr_job, jobs)
+        events: list[BattleLogEvent] = []
+        for job, text in zip(jobs, texts, strict=True):
             logger.info("Raw OCRed text: %s", text)
             if not text:
                 continue
-
-            if text == self._last_emitted_text.get(region_name):
+            if text == self._last_emitted_text.get(job.region_name):
                 continue
 
             region_events = self._parse_region(
-                region_name,
-                side,
-                slot,
+                job.region_name,
+                job.side,
+                job.slot,
                 text,
                 player_species=player_species,
                 opponent_species=opponent_species,
             )
             if not region_events:
-                logger.debug("Unparsed OCR in %s: %r", region_name, text)
+                logger.debug("Unparsed OCR in %s: %r", job.region_name, text)
                 continue
 
-            self._last_emitted_text[region_name] = text
+            self._last_emitted_text[job.region_name] = text
             events.extend(region_events)
 
         return events
@@ -210,3 +222,7 @@ def _ocr_text(crop_rgb: np.ndarray, *, mode: str = "banner") -> str:
     prepared = _preprocess_for_ocr(crop_rgb, mode=mode)
     lines = read_text(prepared, detail=0, paragraph=True)
     return " ".join(lines).strip()
+
+
+def _run_ocr_job(job: _OcrJob) -> str:
+    return _ocr_text(job.crop, mode=job.mode)
