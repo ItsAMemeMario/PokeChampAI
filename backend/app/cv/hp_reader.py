@@ -39,11 +39,13 @@ _EMPTY_CROP_MEAN_MAX = 5.0
 # HP-bar motion on the in-card bar crop only.
 _HP_BAR_DIFF_DOWNSCALE = 4
 _HP_BAR_DIFF_MEAN_MIN = 3.0
-# Keep low-saturation bright pixels (white name/HP text); drop colored bar/FX.
-# HSV saturation rejects yellow/green battle glow better than RGB chroma.
+# Player cards: purple/blue name banner — HSV keeps white AA strokes.
 _SLOT_CARD_SAT_MAX = 50
 _SLOT_CARD_VALUE_MIN = 180
 _SLOT_CARD_OCR_UPSCALE = 2.0
+# Opponent cards: pink/magenta name banner — gray threshold + stronger upscale.
+_OPPONENT_SLOT_OCR_UPSCALE = 3.0
+_OPPONENT_SLOT_GRAY_THRESH = 180
 
 # Player cards: "162 / 162" or "162/162"
 _PLAYER_HP_RE = re.compile(r"(?P<current>\d+)\s*/\s*(?P<max>\d+)")
@@ -78,7 +80,7 @@ def read_slot_card(
     if not _slot_card_visible(crop):
         return None
     return parse_slot_card_text(
-        _ocr_slot_card_text(crop),
+        _ocr_slot_card_text(crop, side),
         side,
         player_species=player_species,
         opponent_species=opponent_species,
@@ -159,7 +161,10 @@ class HPReader:
 
             ocr_jobs.append((card_name, side, slot, crop))
 
-        texts = map_parallel(_ocr_slot_card_text, [crop for *_, crop in ocr_jobs])
+        texts = map_parallel(
+            lambda item: _ocr_slot_card_text(item[0], item[1]),
+            [(crop, side) for _n, side, _s, crop in ocr_jobs],
+        )
         for (card_name, side, slot, _crop), text in zip(ocr_jobs, texts, strict=True):
             tracker = self._trackers.setdefault(card_name, HPReadTracker())
             reading = parse_slot_card_text(
@@ -205,7 +210,10 @@ class HPReader:
                 continue
             ocr_jobs.append((card_name, side, slot, crop))
 
-        texts = map_parallel(_ocr_slot_card_text, [crop for *_, crop in ocr_jobs])
+        texts = map_parallel(
+            lambda item: _ocr_slot_card_text(item[0], item[1]),
+            [(crop, side) for _n, side, _s, crop in ocr_jobs],
+        )
         for (card_name, side, slot, crop), text in zip(ocr_jobs, texts, strict=True):
             reading = parse_slot_card_text(
                 text,
@@ -377,6 +385,8 @@ def _normalize_slot_ocr_text(text: str, side: Side) -> str:
         # Thin "/" is often read as "7", gluing current/max into one token (1627162).
         cleaned = re.sub(r"\b(\d{2,3})7(\d{2,3})\b", r"\1 / \2", cleaned)
     else:
+        # Italic "%" is often read as "*" (e.g. "46*" → "46%").
+        cleaned = re.sub(r"\b(\d{1,3})\s*\*", r"\1%", cleaned)
         # Collapse "100 %" spacing; repair common 100% OCR tails (1005/100e).
         cleaned = re.sub(r"\b(\d{1,3})\s+%", r"\1%", cleaned)
         cleaned = re.sub(r"\b(100)[5eEoOsSgG]\b", r"100%", cleaned)
@@ -386,20 +396,31 @@ def _normalize_slot_ocr_text(text: str, side: Side) -> str:
     return cleaned
 
 
-def _ocr_slot_card_text(crop_rgb: np.ndarray) -> str:
-    """OCR a slot-card crop after low-saturation + bright masking."""
-    prepared = _preprocess_slot_card_for_ocr(crop_rgb)
+def _ocr_slot_card_text(crop_rgb: np.ndarray, side: Side | None = None) -> str:
+    """OCR a slot-card crop with a side-specific preprocess."""
+    prepared = _preprocess_slot_card_for_ocr(crop_rgb, side=side)
     lines = read_text(prepared, detail=0, paragraph=True)
     return " ".join(lines).strip()
 
 
-def _preprocess_slot_card_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
-    """Mask to low-saturation bright text, then 2× upscale for EasyOCR.
+def _preprocess_slot_card_for_ocr(
+    crop_rgb: np.ndarray,
+    *,
+    side: Side | None = None,
+) -> np.ndarray:
+    """Side-specific mask/threshold, then upscale for EasyOCR.
 
-    RGB chroma lets yellow/green battle FX through and corrupts species glyphs
-    (e.g. Grimmsnarl → Guimgsowi). HSV saturation drops that glow while keeping
-    white name/HP digits.
+    Player name banners are purple/blue; opponent banners are pink/magenta.
+    One HSV gate cannot serve both: the player gate starves white strokes on pink
+    (live Musharna → ``40m1"``), while gray-threshold damages player HP fractions.
     """
+    if side == "opponent":
+        return _preprocess_opponent_slot_card(crop_rgb)
+    return _preprocess_player_slot_card(crop_rgb)
+
+
+def _preprocess_player_slot_card(crop_rgb: np.ndarray) -> np.ndarray:
+    """HSV low-sat + bright mask for purple/blue player name banners."""
     hsv = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2HSV)
     keep = (hsv[:, :, 1] <= _SLOT_CARD_SAT_MAX) & (hsv[:, :, 2] >= _SLOT_CARD_VALUE_MIN)
 
@@ -413,6 +434,22 @@ def _preprocess_slot_card_for_ocr(crop_rgb: np.ndarray) -> np.ndarray:
         interpolation=cv2.INTER_CUBIC,
     )
     return cv2.cvtColor(upscaled, cv2.COLOR_GRAY2RGB)
+
+
+def _preprocess_opponent_slot_card(crop_rgb: np.ndarray) -> np.ndarray:
+    """Gray threshold + 3× upscale for pink/magenta opponent name banners."""
+    gray = cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2GRAY)
+    upscaled = cv2.resize(
+        gray,
+        None,
+        fx=_OPPONENT_SLOT_OCR_UPSCALE,
+        fy=_OPPONENT_SLOT_OCR_UPSCALE,
+        interpolation=cv2.INTER_CUBIC,
+    )
+    _, thresh = cv2.threshold(
+        upscaled, _OPPONENT_SLOT_GRAY_THRESH, 255, cv2.THRESH_BINARY
+    )
+    return cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB)
 
 
 def lookup_active_hp(
