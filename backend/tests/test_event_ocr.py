@@ -178,7 +178,10 @@ def test_event_ocr_engine_emits_once_per_region(mock_ocr, region_config) -> None
 
 
 @patch("app.cv.event_ocr._ocr_text")
-def test_event_ocr_engine_re_emits_after_region_clears(mock_ocr, region_config) -> None:
+def test_event_ocr_engine_does_not_re_emit_after_region_clears(
+    mock_ocr, region_config
+) -> None:
+    """Brief empty frames must not allow the same banner event to re-fire."""
     mock_ocr.side_effect = lambda crop, mode="banner": "Staraptor's Intimidate"
     engine = EventOcrEngine()
     ability_image = _load_asset("player_slot_1_banner.png")
@@ -189,7 +192,7 @@ def test_event_ocr_engine_re_emits_after_region_clears(mock_ocr, region_config) 
     second = engine.process_frame(ability_image, region_config)
 
     assert len(first) == 1
-    assert len(second) == 1
+    assert second == []
 
 
 @patch("app.cv.event_ocr._ocr_text")

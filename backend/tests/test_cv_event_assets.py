@@ -102,14 +102,13 @@ def test_opponent_sends_out_staraptor_and_whimsicott(
         _load_event_asset("opponent_sends_out_staraptor_and_whimsicott.png"),
         region_config,
     )
-    switch_ins = _events_of_type(events, "switch_in")
-    assert len(switch_ins) == 2
-    assert switch_ins[0].pokemon.species == "Staraptor"
-    assert switch_ins[0].pokemon.side == "opponent"
-    assert switch_ins[0].pokemon.slot == 1
-    assert switch_ins[1].pokemon.species == "Whimsicott"
-    assert switch_ins[1].pokemon.side == "opponent"
-    assert switch_ins[1].pokemon.slot == 2
+    lead_ins = _events_of_type(events, "lead_in")
+    assert len(lead_ins) == 1
+    assert lead_ins[0].side == "opponent"
+    assert lead_ins[0].slot_1.species == "Staraptor"
+    assert lead_ins[0].slot_1.slot == 1
+    assert lead_ins[0].slot_2.species == "Whimsicott"
+    assert lead_ins[0].slot_2.slot == 2
 
 
 def test_opposing_tailwind_blows(event_engine: EventOcrEngine, region_config) -> None:
@@ -139,14 +138,13 @@ def test_player_sends_out_sneasler_and_grimmsnarl(
         _load_event_asset("player_sends_out_sneasler_and_grimmsnarl.png"),
         region_config,
     )
-    switch_ins = _events_of_type(events, "switch_in")
-    assert len(switch_ins) == 2
-    assert switch_ins[0].pokemon.species == "Sneasler"
-    assert switch_ins[0].pokemon.side == "player"
-    assert switch_ins[0].pokemon.slot == 1
-    assert switch_ins[1].pokemon.species == "Grimmsnarl"
-    assert switch_ins[1].pokemon.side == "player"
-    assert switch_ins[1].pokemon.slot == 2
+    lead_ins = _events_of_type(events, "lead_in")
+    assert len(lead_ins) == 1
+    assert lead_ins[0].side == "player"
+    assert lead_ins[0].slot_1.species == "Sneasler"
+    assert lead_ins[0].slot_1.slot == 1
+    assert lead_ins[0].slot_2.species == "Grimmsnarl"
+    assert lead_ins[0].slot_2.slot == 2
 
 
 def test_player_withdraws_sneasler(event_engine: EventOcrEngine, region_config) -> None:

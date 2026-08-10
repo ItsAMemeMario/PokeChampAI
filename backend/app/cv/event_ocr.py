@@ -11,7 +11,7 @@ import numpy as np
 from app.cv.event_parser import parse_battle_text, parse_side_banner
 from app.cv.ocr_reader import map_parallel, read_text
 from app.cv.regions import RegionConfig, config_for_image, crop_region
-from app.schema.battle_log import BattleLogEvent
+from app.schema.battle_log import BattleLogEvent, LeadInEvent
 from app.schema.common import Side, Slot
 
 logger = logging.getLogger(__name__)
@@ -54,11 +54,15 @@ class EventOcrEngine:
 
     _previous_frames: dict[str, np.ndarray | None] = field(default_factory=dict)
     _last_emitted_text: dict[str, str] = field(default_factory=dict)
+    # Semantic fingerprints suppress OCR-jitter re-emits of the same event while
+    # the region still shows content (exact raw string match is too brittle).
+    _last_emitted_fingerprints: dict[str, set[tuple]] = field(default_factory=dict)
 
     def reset(self) -> None:
         """Clear diff state when leaving battle animation."""
         self._previous_frames.clear()
         self._last_emitted_text.clear()
+        self._last_emitted_fingerprints.clear()
 
     def process_frame(
         self,
@@ -84,8 +88,11 @@ class EventOcrEngine:
             )
             if not _region_has_content(content_crop, region_name):
                 logger.info("Region %s has no content", region_name)
-                self._previous_frames.pop(region_name, None)
                 self._last_emitted_text.pop(region_name, None)
+                self._previous_frames.pop(region_name, None)
+                # Keep fingerprints across brief content flicker so the same
+                # on-screen message is not re-emitted when the region returns.
+                # Fingerprints clear on reset() when leaving battle_animation.
                 continue
 
             prev = self._previous_frames.get(region_name)
@@ -117,8 +124,21 @@ class EventOcrEngine:
                 logger.debug("Unparsed OCR in %s: %r", job.region_name, text)
                 continue
 
+            prior_fps = self._last_emitted_fingerprints.get(job.region_name, set())
+            novel_events = [
+                event
+                for event in region_events
+                if _event_fingerprint(event) not in prior_fps
+            ]
+            # Always remember the latest OCR string so exact matches short-circuit.
             self._last_emitted_text[job.region_name] = text
-            events.extend(region_events)
+            if not novel_events:
+                continue
+
+            self._last_emitted_fingerprints[job.region_name] = prior_fps | {
+                _event_fingerprint(event) for event in novel_events
+            }
+            events.extend(novel_events)
 
         return events
 
@@ -148,6 +168,33 @@ class EventOcrEngine:
             opponent_species=opponent_species,
         )
         return [event] if event is not None else []
+
+
+def _event_fingerprint(event: BattleLogEvent) -> tuple:
+    """Identity for OCR re-emit suppression (ignores brittle raw OCR text)."""
+    key: list[object] = [event.type]
+    if isinstance(event, LeadInEvent):
+        key.extend([event.side, event.slot_1.species, event.slot_2.species])
+        return tuple(key)
+    pokemon = getattr(event, "pokemon", None) or getattr(event, "actor", None)
+    if pokemon is not None:
+        # switch_in/out: omit slot — a bad single-lead OCR often defaults slot=1,
+        # then a cleaner reading may assign the true slot.
+        if event.type in {"switch_in", "switch_out"}:
+            key.extend([pokemon.species, pokemon.side])
+        else:
+            key.extend([pokemon.species, pokemon.side, pokemon.slot])
+    if event.type == "stat_change":
+        key.extend([event.stat, event.stages_delta])
+    if event.type in {"move_used", "move_failed"}:
+        key.append(getattr(event, "move", None))
+    if event.type == "item_used":
+        key.append(getattr(event, "item", None))
+    if event.type == "ability_triggered":
+        key.append(getattr(event, "ability", None))
+    if event.type in {"status_applied", "volatile_applied"}:
+        key.append(getattr(event, "status", None) or getattr(event, "volatile", None))
+    return tuple(key)
 
 
 def _region_has_content(crop_rgb: np.ndarray, region_name: str) -> bool:

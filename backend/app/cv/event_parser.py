@@ -11,6 +11,7 @@ from app.schema.battle_log import (
     AbilityTriggeredEvent,
     BattleLogEvent,
     FaintEvent,
+    LeadInEvent,
     MegaEvolutionEvent,
     MoveFailedEvent,
     MoveUsedEvent,
@@ -181,6 +182,8 @@ def normalize_ocr_text(text: str) -> str:
     cleaned = re.sub(r"(?i)\b[oq0w]pposing\b", "opposing", cleaned)
     cleaned = re.sub(r"(?i)\bsent\s*out\b", "sent out", cleaned)
     cleaned = re.sub(r"(?i)(\w)sent out\b", r"\1 sent out", cleaned)
+    # Dual leads: "and" is often OCR'd as "ard".
+    cleaned = re.sub(r"(?i)\s+ard\s+", " and ", cleaned)
     # Trailing "!" OCR'd as l/i/I/1 (e.g. "Swaggerl", "Charizardl").
     cleaned = re.sub(r"([A-Za-z])[lIi1]\s*$", r"\1!", cleaned)
     cleaned = cleaned.strip()
@@ -531,7 +534,7 @@ def _parse_volatile(text: str) -> VolatileAppliedEvent | None:
     )
 
 
-def _parse_switch(text: str) -> list[SwitchInEvent | SwitchOutEvent]:
+def _parse_switch(text: str) -> list[BattleLogEvent]:
     match = _SWITCH_RE.search(text)
     if not match:
         return []
@@ -539,25 +542,21 @@ def _parse_switch(text: str) -> list[SwitchInEvent | SwitchOutEvent]:
     lowered = text.lower()
     if match.group("player_dual_1") is not None:
         return [
-            SwitchInEvent(
+            LeadInEvent(
                 raw_text=text,
-                pokemon=_pokemon(match.group("player_dual_1"), "player", slot=1),
-            ),
-            SwitchInEvent(
-                raw_text=text,
-                pokemon=_pokemon(match.group("player_dual_2"), "player", slot=2),
-            ),
+                side="player",
+                slot_1=_pokemon(match.group("player_dual_1"), "player", slot=1),
+                slot_2=_pokemon(match.group("player_dual_2"), "player", slot=2),
+            )
         ]
     if match.group("opponent_dual_1") is not None:
         return [
-            SwitchInEvent(
+            LeadInEvent(
                 raw_text=text,
-                pokemon=_pokemon(match.group("opponent_dual_1"), "opponent", slot=1),
-            ),
-            SwitchInEvent(
-                raw_text=text,
-                pokemon=_pokemon(match.group("opponent_dual_2"), "opponent", slot=2),
-            ),
+                side="opponent",
+                slot_1=_pokemon(match.group("opponent_dual_1"), "opponent", slot=1),
+                slot_2=_pokemon(match.group("opponent_dual_2"), "opponent", slot=2),
+            )
         ]
     if match.group("player_out") is not None or "come back" in lowered:
         return [
@@ -711,6 +710,9 @@ def parse_battle_text(
 
 def _event_dedupe_key(event: BattleLogEvent) -> tuple:
     key: list[object] = [event.type, event.raw_text]
+    if isinstance(event, LeadInEvent):
+        key.extend([event.side, event.slot_1.species, event.slot_2.species])
+        return tuple(key)
     pokemon = getattr(event, "pokemon", None) or getattr(event, "actor", None)
     if pokemon is not None:
         key.extend([pokemon.species, pokemon.side, pokemon.slot])

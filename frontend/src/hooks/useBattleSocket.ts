@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { getWebSocketUrl } from "../api/client";
 import type {
   BattleLiveState,
@@ -38,8 +38,55 @@ function appendLog(
   logs: BattleLogEvent[],
   event: BattleLogEvent,
 ): BattleLogEvent[] {
+  const last = logs[logs.length - 1];
+  if (last && isOcrReread(last, event)) {
+    return [...logs.slice(0, -1), event];
+  }
   const next = [...logs, event];
   return next.length > MAX_LOG_EVENTS ? next.slice(-MAX_LOG_EVENTS) : next;
+}
+
+function eventSide(event: BattleLogEvent): string | undefined {
+  const pokemon = event.pokemon as { side?: string; species?: string } | undefined;
+  const actor = event.actor as { side?: string; species?: string } | undefined;
+  return pokemon?.side ?? actor?.side;
+}
+
+function eventSpecies(event: BattleLogEvent): string | undefined {
+  const pokemon = event.pokemon as { species?: string } | undefined;
+  const actor = event.actor as { species?: string } | undefined;
+  return pokemon?.species ?? actor?.species;
+}
+
+/** Collapse consecutive OCR re-reads of the same on-screen message. */
+function isOcrReread(previous: BattleLogEvent, next: BattleLogEvent): boolean {
+  if (previous.type !== next.type) {
+    return false;
+  }
+  if (next.type === "move_used") {
+    return eventSide(previous) === eventSide(next);
+  }
+  if (
+    next.type === "lead_in" ||
+    next.type === "switch_in" ||
+    next.type === "switch_out" ||
+    next.type === "faint" ||
+    next.type === "item_used" ||
+    next.type === "stat_change" ||
+    next.type === "status_applied" ||
+    next.type === "volatile_applied"
+  ) {
+    if (next.type === "lead_in") {
+      const prevSide = (previous as { side?: string }).side;
+      const nextSide = (next as { side?: string }).side;
+      return prevSide === nextSide;
+    }
+    return (
+      eventSide(previous) === eventSide(next) &&
+      eventSpecies(previous) === eventSpecies(next)
+    );
+  }
+  return false;
 }
 
 function reduceMessage(
@@ -78,15 +125,10 @@ function reduceMessage(
         battleLogs: appendLog(prev.battleLogs, message.payload),
       };
     case "log_patched":
-      // Patches rewrite earlier events; keep the stream readable by appending a note.
-      return {
-        ...prev,
-        connected: true,
-        battleLogs: appendLog(prev.battleLogs, {
-          ...message.payload.event,
-          raw_text: `[patched T${message.payload.turn}] ${message.payload.event.raw_text}`,
-        }),
-      };
+      // Completer rewrites structured fields in place on the server. The live
+      // log already received the event via "log" (often already patched); do
+      // not append a second row that looks like a duplicate.
+      return { ...prev, connected: true };
     case "team_preview":
       return {
         ...prev,
@@ -108,40 +150,52 @@ function reduceMessage(
 
 export function useBattleSocket(): BattleLiveState {
   const [state, setState] = useState<BattleLiveState>(EMPTY_STATE);
-  const reconnectTimer = useRef<number | null>(null);
-  const socketRef = useRef<WebSocket | null>(null);
-  const disposedRef = useRef(false);
 
   useEffect(() => {
-    disposedRef.current = false;
+    let cancelled = false;
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | null = null;
 
     const clearReconnect = () => {
-      if (reconnectTimer.current !== null) {
-        window.clearTimeout(reconnectTimer.current);
-        reconnectTimer.current = null;
+      if (reconnectTimer !== null) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
       }
     };
 
     const scheduleReconnect = () => {
       clearReconnect();
-      if (disposedRef.current) {
+      if (cancelled) {
         return;
       }
-      reconnectTimer.current = window.setTimeout(connect, RECONNECT_MS);
+      reconnectTimer = window.setTimeout(connect, RECONNECT_MS);
     };
 
     const connect = () => {
-      if (disposedRef.current) {
+      if (cancelled) {
         return;
       }
-      const socket = new WebSocket(getWebSocketUrl());
-      socketRef.current = socket;
+      // Ensure only one live socket from this effect (drop orphans before open).
+      if (socket !== null) {
+        const prev = socket;
+        socket = null;
+        prev.close();
+      }
 
-      socket.onopen = () => {
+      const next = new WebSocket(getWebSocketUrl());
+      socket = next;
+
+      next.onopen = () => {
+        if (cancelled || socket !== next) {
+          return;
+        }
         setState((prev) => ({ ...prev, connected: true }));
       };
 
-      socket.onmessage = (event) => {
+      next.onmessage = (event) => {
+        if (cancelled || socket !== next) {
+          return;
+        }
         try {
           const message = JSON.parse(event.data as string) as WsMessage;
           setState((prev) => reduceMessage(prev, message));
@@ -150,24 +204,30 @@ export function useBattleSocket(): BattleLiveState {
         }
       };
 
-      socket.onclose = () => {
+      next.onclose = () => {
+        if (socket === next) {
+          socket = null;
+        }
+        if (cancelled) {
+          return;
+        }
         setState((prev) => ({ ...prev, connected: false }));
-        socketRef.current = null;
         scheduleReconnect();
       };
 
-      socket.onerror = () => {
-        socket.close();
+      next.onerror = () => {
+        next.close();
       };
     };
 
     connect();
 
     return () => {
-      disposedRef.current = true;
+      cancelled = true;
       clearReconnect();
-      socketRef.current?.close();
-      socketRef.current = null;
+      const active = socket;
+      socket = null;
+      active?.close();
     };
   }, []);
 

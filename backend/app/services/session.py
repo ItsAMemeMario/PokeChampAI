@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from app.schema.battle_log import BattleLogEvent, TurnStartEvent
+from app.schema.battle_log import BattleLogEvent, LeadInEvent, MoveUsedEvent, TurnStartEvent
 from app.schema.gamestate import GameState
 from app.schema.suggestions import TeamPreviewSuggestion, TurnSuggestion
 from app.schema.team import PlayerTeam
@@ -106,7 +106,6 @@ class SessionStore:
                 turn = 0
                 while len(self.battle_logs) <= 0:
                     self.battle_logs.append([])
-                self.battle_logs[0].append(event)
             else:
                 while len(self.battle_logs) <= turn:
                     self.battle_logs.append([])
@@ -114,7 +113,15 @@ class SessionStore:
                     raise ValueError(
                         f"Turn {turn} is not open; append a TurnStartEvent first"
                     )
-                self.battle_logs[turn].append(event)
+
+            turn_logs = self.battle_logs[turn]
+            event_key = _semantic_key(event)
+            if turn_logs and _is_ocr_reread(turn_logs[-1], event):
+                turn_logs[-1] = event
+            elif any(_semantic_key(existing) == event_key for existing in turn_logs):
+                return []
+            else:
+                turn_logs.append(event)
 
         # Local imports avoid circular dependencies at module load time.
         from app.services.battle_log_completer import complete_battle_logs
@@ -140,6 +147,58 @@ class SessionStore:
         publish_log(self.battle_logs[turn][-1])
         publish_state(self)
         return patched
+
+
+def _is_ocr_reread(previous: BattleLogEvent, new: BattleLogEvent) -> bool:
+    """True when ``new`` is a cleaner OCR of the same on-screen message as ``previous``."""
+    if previous.type != new.type:
+        return False
+    if isinstance(new, MoveUsedEvent) and isinstance(previous, MoveUsedEvent):
+        # Same side's move text often re-OCRs with different spellings before clear.
+        return previous.actor.side == new.actor.side
+    if isinstance(new, LeadInEvent) and isinstance(previous, LeadInEvent):
+        return previous.side == new.side
+
+    prev_mon = getattr(previous, "pokemon", None)
+    new_mon = getattr(new, "pokemon", None)
+    if prev_mon is None or new_mon is None:
+        return False
+    if prev_mon.side != new_mon.side:
+        return False
+    # Dual switch-ins are different species; only collapse same-species jitter.
+    if new.type in {"switch_in", "switch_out", "faint", "item_used"}:
+        return prev_mon.species == new_mon.species
+    if new.type in {"stat_change", "status_applied", "volatile_applied"}:
+        return prev_mon.species == new_mon.species
+    return False
+
+
+def _semantic_key(event: BattleLogEvent) -> tuple:
+    """Turn-level identity used to drop late re-emits of the same CV event."""
+    key: list[object] = [event.type]
+    if isinstance(event, LeadInEvent):
+        key.extend([event.side, event.slot_1.species, event.slot_2.species])
+        return tuple(key)
+    pokemon = getattr(event, "pokemon", None) or getattr(event, "actor", None)
+    if pokemon is not None:
+        # Match OCR fingerprints: switch identity is species+side, not slot.
+        if event.type in {"switch_in", "switch_out"}:
+            key.extend([pokemon.species, pokemon.side])
+        else:
+            key.extend([pokemon.species, pokemon.side, pokemon.slot])
+    if event.type == "stat_change":
+        key.extend(
+            [getattr(event, "stat", None), getattr(event, "stages_delta", None)]
+        )
+    if event.type in {"move_used", "move_failed"}:
+        key.append(getattr(event, "move", None))
+    if event.type == "item_used":
+        key.append(getattr(event, "item", None))
+    if event.type == "ability_triggered":
+        key.append(getattr(event, "ability", None))
+    if event.type in {"status_applied", "volatile_applied"}:
+        key.append(getattr(event, "status", None) or getattr(event, "volatile", None))
+    return tuple(key)
 
 
 session_store = SessionStore()

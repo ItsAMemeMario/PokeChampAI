@@ -234,26 +234,24 @@ def test_parse_dragged_out_opponent() -> None:
 
 def test_parse_player_dual_lead_switch_in() -> None:
     events = parse_battle_text("Go! Incineroar and Rillaboom!")
-    assert len(events) == 2
-    assert all(event.type == "switch_in" for event in events)
-    assert events[0].pokemon.species == "Incineroar"
-    assert events[0].pokemon.side == "player"
-    assert events[0].pokemon.slot == 1
-    assert events[1].pokemon.species == "Rillaboom"
-    assert events[1].pokemon.side == "player"
-    assert events[1].pokemon.slot == 2
+    assert len(events) == 1
+    assert events[0].type == "lead_in"
+    assert events[0].side == "player"
+    assert events[0].slot_1.species == "Incineroar"
+    assert events[0].slot_1.slot == 1
+    assert events[0].slot_2.species == "Rillaboom"
+    assert events[0].slot_2.slot == 2
 
 
 def test_parse_opponent_dual_lead_switch_in() -> None:
     events = parse_battle_text("Blue sent out Garchomp and Sylveon!")
-    assert len(events) == 2
-    assert all(event.type == "switch_in" for event in events)
-    assert events[0].pokemon.species == "Garchomp"
-    assert events[0].pokemon.side == "opponent"
-    assert events[0].pokemon.slot == 1
-    assert events[1].pokemon.species == "Sylveon"
-    assert events[1].pokemon.side == "opponent"
-    assert events[1].pokemon.slot == 2
+    assert len(events) == 1
+    assert events[0].type == "lead_in"
+    assert events[0].side == "opponent"
+    assert events[0].slot_1.species == "Garchomp"
+    assert events[0].slot_1.slot == 1
+    assert events[0].slot_2.species == "Sylveon"
+    assert events[0].slot_2.slot == 2
 
 
 def test_parse_volatile_taunt() -> None:

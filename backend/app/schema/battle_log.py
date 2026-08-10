@@ -45,6 +45,19 @@ class SwitchInEvent(BattleLogEventBase):
     pokemon: Pokemon
 
 
+class LeadInEvent(BattleLogEventBase):
+    """Opening dual lead send-out as a single game message.
+
+    Covers texts like ``Go! Sneasler and Grimmsnarl!`` or
+    ``Blue sent out Musharna and Dragapult!``.
+    """
+
+    type: Literal["lead_in"] = "lead_in"
+    side: Side
+    slot_1: Pokemon
+    slot_2: Pokemon
+
+
 class SwitchOutEvent(BattleLogEventBase):
     type: Literal["switch_out"] = "switch_out"
     pokemon: Pokemon
@@ -121,6 +134,7 @@ BattleLogEvent = Annotated[
         MoveUsedEvent,
         MoveFailedEvent,
         AbilityTriggeredEvent,
+        LeadInEvent,
         SwitchInEvent,
         SwitchOutEvent,
         ItemUsedEvent,

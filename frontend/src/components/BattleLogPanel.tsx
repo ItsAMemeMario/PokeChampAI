@@ -7,6 +7,8 @@ type BattleLogPanelProps = {
 };
 
 function formatEvent(event: BattleLogEvent): string {
+  // Prefer the in-game OCR string (lead-ins are one dual message; mid-battle
+  // switch texts are already distinct per send-out).
   if (event.raw_text) {
     return String(event.raw_text);
   }

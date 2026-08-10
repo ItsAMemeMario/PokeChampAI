@@ -9,6 +9,7 @@ from app.schema.battle_log import (
     FaintEvent,
     HPChangeEvent,
     ItemUsedEvent,
+    LeadInEvent,
     MegaEvolutionEvent,
     MoveFailedEvent,
     MoveUsedEvent,
@@ -541,34 +542,32 @@ def test_append_battle_log_reduces_game_state() -> None:
 
 
 def test_append_lead_in_events_before_turn_start() -> None:
-    """Opening animation switch-ins land in battle_logs[0] before TurnStartEvent."""
+    """Opening animation dual leads land in battle_logs[0] before TurnStartEvent."""
     store = SessionStore()
     store.begin_battle()
     assert store.turn_number == 0
 
     store.append_battle_log(
-        SwitchInEvent(
+        LeadInEvent(
             raw_text="sent out Musharna and Dragapult!",
-            pokemon=_poke("Musharna", side="opponent", slot=1),
-        )
-    )
-    store.append_battle_log(
-        SwitchInEvent(
-            raw_text="sent out Musharna and Dragapult!",
-            pokemon=_poke("Dragapult", side="opponent", slot=2),
+            side="opponent",
+            slot_1=_poke("Musharna", side="opponent", slot=1),
+            slot_2=_poke("Dragapult", side="opponent", slot=2),
         )
     )
 
     assert store.turn_number == 0
-    assert len(store.battle_logs[0]) == 2
-    assert store.battle_logs[0][0].type == "switch_in"
+    assert len(store.battle_logs[0]) == 1
+    assert store.battle_logs[0][0].type == "lead_in"
     assert store.game_state is not None
     assert store.game_state.opponent.slot_1 is not None
     assert store.game_state.opponent.slot_1.species == "Musharna"
+    assert store.game_state.opponent.slot_2 is not None
+    assert store.game_state.opponent.slot_2.species == "Dragapult"
 
     store.append_battle_log(TurnStartEvent(raw_text="Turn 1", turn_number=1))
     assert store.turn_number == 1
-    assert len(store.battle_logs[0]) == 2
+    assert len(store.battle_logs[0]) == 1
     assert store.battle_logs[1][0].type == "turn_start"
 
 

@@ -14,6 +14,7 @@ from app.schema.battle_log import (
     FaintEvent,
     HPChangeEvent,
     ItemUsedEvent,
+    LeadInEvent,
     MegaEvolutionEvent,
     MoveFailedEvent,
     MoveUsedEvent,
@@ -190,6 +191,8 @@ def apply_event(
         return _apply_faint(state, event)
     if isinstance(event, SwitchOutEvent):
         return _apply_switch_out(state, event)
+    if isinstance(event, LeadInEvent):
+        return _apply_lead_in(state, event, player_team=player_team)
     if isinstance(event, SwitchInEvent):
         return _apply_switch_in(state, event, player_team=player_team)
     if isinstance(event, MegaEvolutionEvent):
@@ -220,7 +223,7 @@ def apply_event_to_store(store: SessionStore, event: BattleLogEvent) -> GameStat
     """Update ``store.game_state`` from a (possibly completer-patched) event."""
     state = store.game_state
     if state is None:
-        if isinstance(event, (SwitchInEvent, TurnStartEvent)):
+        if isinstance(event, (LeadInEvent, SwitchInEvent, TurnStartEvent)):
             state = seed_from_session(store)
         else:
             return None
@@ -364,6 +367,25 @@ def _apply_switch_out(state: GameState, event: SwitchOutEvent) -> GameState:
         patch["slot_2"] = None
     new_side = side_state.model_copy(update=patch)
     return state.model_copy(update={side: new_side})
+
+
+def _apply_lead_in(
+    state: GameState,
+    event: LeadInEvent,
+    *,
+    player_team: PlayerTeam | None = None,
+) -> GameState:
+    """Place both opening leads from a dual send-out message."""
+    state = _apply_switch_in(
+        state,
+        SwitchInEvent(raw_text=event.raw_text, pokemon=event.slot_1),
+        player_team=player_team,
+    )
+    return _apply_switch_in(
+        state,
+        SwitchInEvent(raw_text=event.raw_text, pokemon=event.slot_2),
+        player_team=player_team,
+    )
 
 
 def _apply_switch_in(
