@@ -5,22 +5,38 @@ from __future__ import annotations
 import logging
 import re
 from contextvars import ContextVar
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Any, Iterable
 
+from rapidfuzz import fuzz, process
+
+from app.cv.battle_text_catalog import (
+    BattleTextTemplate,
+    catalog_templates,
+    normalize_catalog_text,
+    template_candidate_strings,
+)
 from app.schema.battle_log import (
     AbilityTriggeredEvent,
     BattleLogEvent,
     FaintEvent,
+    FieldEffectChangedEvent,
+    HeldItemChangedEvent,
     LeadInEvent,
     MegaEvolutionEvent,
+    MoveAvailabilityChangedEvent,
     MoveFailedEvent,
+    MoveOutcomeEvent,
     MoveUsedEvent,
     ItemUsedEvent,
+    PerishSongStartedEvent,
     SideConditionEvent,
     StatChangeEvent,
+    StatStageOperationEvent,
     StatusAppliedEvent,
     StatusCuredEvent,
     SwitchInEvent,
+    SwitchLockStartedEvent,
     SwitchOutEvent,
     TerrainEndEvent,
     TerrainStartEvent,
@@ -39,6 +55,10 @@ from app.util.event_identity import semantic_key
 from app.util.legal_snap import snap_to_legal
 
 logger = logging.getLogger(__name__)
+
+# Fixed-template RapidFuzz gates (tokenized confidence lands in the matcher todo).
+_FIXED_SCORE_CUTOFF = 88.0
+_FIXED_AMBIGUITY_MARGIN = 2.5
 
 _PLAYER_SPECIES: ContextVar[tuple[str, ...]] = ContextVar(
     "event_parser_player_species",
@@ -186,15 +206,22 @@ _SIDE_CONDITION_RE = re.compile(
     r"|Aurora\s+Veil\s+made\s+" + _SIDE_PHRASE + r"\s+side\s+stronger\s+against\s+physical\s+and\s+special\s+moves"
     r"|Toxic\s+spikes\s+were\s+scattered\s+on\s+the\s+ground\s+all\s+around\s+" + _SIDE_PHRASE + r"\s+side"
     r"|Spikes\s+were\s+scattered\s+on\s+the\s+ground\s+all\s+around\s+" + _SIDE_PHRASE + r"\s+side"
-    r"|Pointed\s+stones\s+float\s+in\s+the\s+air\s+around\s+" + _SIDE_PHRASE + r"\s+team"
+    r"|Pointed\s+stones\s+float\s+in\s+the\s+air\s+(?:on|around)\s+" + _SIDE_PHRASE + r"\s+(?:side|team)"
     r")",
     re.IGNORECASE,
 )
 
 
+@dataclass(frozen=True)
+class _FixedMatch:
+    template: BattleTextTemplate
+    score: float
+    matched_text: str
+
+
 def normalize_ocr_text(text: str) -> str:
     """Normalize OCR quirks before pattern matching."""
-    cleaned = text.replace("\u2019", "'")
+    cleaned = normalize_catalog_text(text)
     # EasyOCR often mangles "'s" as "'$", "' $", "' s", "' 5", or bare "$".
     cleaned = re.sub(r"['\u2019]\s*[\$5sS]\s+", "'s ", cleaned)
     cleaned = re.sub(r"['\u2019]\s*\$", "'s", cleaned)
@@ -214,6 +241,169 @@ def normalize_ocr_text(text: str) -> str:
     cleaned = cleaned.strip()
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned
+
+
+def _fixed_template_index() -> list[tuple[str, BattleTextTemplate]]:
+    """Build (candidate_string, template) pairs for fixed catalog entries."""
+    pairs: list[tuple[str, BattleTextTemplate]] = []
+    for template in catalog_templates(matcher="fixed"):
+        for candidate in template_candidate_strings(template):
+            pairs.append((candidate, template))
+    return pairs
+
+
+_FIXED_INDEX: list[tuple[str, BattleTextTemplate]] | None = None
+
+
+def _get_fixed_index() -> list[tuple[str, BattleTextTemplate]]:
+    global _FIXED_INDEX
+    if _FIXED_INDEX is None:
+        _FIXED_INDEX = _fixed_template_index()
+    return _FIXED_INDEX
+
+
+def match_fixed_catalog_template(normalized: str) -> _FixedMatch | None:
+    """Best unique fixed-template match, or None if weak/ambiguous/no hit."""
+    if not normalized:
+        return None
+
+    index = _get_fixed_index()
+    if not index:
+        return None
+
+    choices = [text for text, _ in index]
+    # Exact case-insensitive win.
+    lowered = normalized.casefold()
+    for text, template in index:
+        if text.casefold() == lowered:
+            return _FixedMatch(template=template, score=100.0, matched_text=text)
+
+    matches = process.extract(
+        normalized,
+        choices,
+        scorer=fuzz.WRatio,
+        score_cutoff=_FIXED_SCORE_CUTOFF,
+        limit=5,
+    )
+    if not matches:
+        return None
+
+    best_text, best_score, best_idx = matches[0]
+    best_template = index[best_idx][1]
+
+    for other_text, other_score, other_idx in matches[1:]:
+        other_template = index[other_idx][1]
+        if other_template.id == best_template.id:
+            continue
+        if best_score - other_score <= _FIXED_AMBIGUITY_MARGIN:
+            logger.info(
+                "Ambiguous fixed catalog match for %r: %s (%.1f) vs %s (%.1f)",
+                normalized,
+                best_template.id,
+                best_score,
+                other_template.id,
+                other_score,
+            )
+            return None
+
+    return _FixedMatch(
+        template=best_template,
+        score=float(best_score),
+        matched_text=best_text,
+    )
+
+
+def _emit_fixed_template(
+    raw_text: str,
+    match: _FixedMatch,
+) -> list[BattleLogEvent]:
+    """Build BattleLogEvent(s) from a fixed catalog hit."""
+    template = match.template
+    static: dict[str, Any] = dict(template.static)
+    kind = template.event_kind
+
+    if kind == "move_outcome":
+        return [
+            MoveOutcomeEvent(
+                raw_text=raw_text,
+                outcome=static["outcome"],
+            )
+        ]
+    if kind == "field_effect_changed":
+        return [
+            FieldEffectChangedEvent(
+                raw_text=raw_text,
+                effect=static["effect"],
+                action=static["action"],
+            )
+        ]
+    if kind == "perish_song_started":
+        return [
+            PerishSongStartedEvent(
+                raw_text=raw_text,
+                turns_remaining=static.get("turns_remaining", 3),
+            )
+        ]
+    if kind == "switch_lock_started":
+        return [
+            SwitchLockStartedEvent(
+                raw_text=raw_text,
+                scope=static.get("scope", "all_active"),
+            )
+        ]
+    if kind == "stat_stage_operation":
+        return [
+            StatStageOperationEvent(
+                raw_text=raw_text,
+                operation=static["operation"],
+            )
+        ]
+    if kind == "held_item_changed":
+        return [
+            HeldItemChangedEvent(
+                raw_text=raw_text,
+                change=static["change"],
+            )
+        ]
+    if kind == "move_failed":
+        return [
+            MoveFailedEvent(
+                raw_text=raw_text,
+                reason=static.get("reason", "failed"),
+            )
+        ]
+    if kind == "move_availability_changed":
+        return [
+            MoveAvailabilityChangedEvent(
+                raw_text=raw_text,
+                restriction=static["restriction"],
+                clears_on_switch=static.get("clears_on_switch"),
+            )
+        ]
+    if kind == "side_condition":
+        return [
+            SideConditionEvent(
+                raw_text=raw_text,
+                side=static["side"],
+                condition=static["condition"],
+                action=static.get("action", "start"),
+            )
+        ]
+    if kind == "weather_start":
+        return [WeatherStartEvent(raw_text=raw_text, weather=static["weather"])]
+    if kind == "weather_end":
+        return [WeatherEndEvent(raw_text=raw_text, weather=static["weather"])]
+    if kind == "terrain_start":
+        return [TerrainStartEvent(raw_text=raw_text, terrain=static["terrain"])]
+    if kind == "terrain_end":
+        return [TerrainEndEvent(raw_text=raw_text, terrain=static["terrain"])]
+    if kind == "trick_room_end":
+        return [TrickRoomEndEvent(raw_text=raw_text)]
+    if kind == "trick_room_start":
+        return [TrickRoomStartEvent(raw_text=raw_text)]
+
+    logger.warning("No emitter for fixed catalog kind %s (%s)", kind, template.id)
+    return []
 
 
 def _side_from_text(text: str) -> Side:
@@ -730,7 +920,12 @@ def parse_battle_text(
     player_species: Iterable[str] | None = None,
     opponent_species: Iterable[str] | None = None,
 ) -> list[BattleLogEvent]:
-    """Parse bottom battle-text OCR into one or more typed events."""
+    """Parse bottom battle-text OCR into one or more typed events.
+
+    Dispatch order:
+    1. Champions-first fixed catalog (RapidFuzz + ambiguity reject)
+    2. Legacy regex handlers for tokenized / variable messages
+    """
     logger.info("Parsing battle text: %s", text)
     normalized = normalize_ocr_text(text)
     logger.info("Normalized OCR text: %s", normalized)
@@ -744,11 +939,23 @@ def parse_battle_text(
     if opponent_species is not None:
         opponent_token = _OPPONENT_SPECIES.set(tuple(opponent_species))
     try:
+        fixed = match_fixed_catalog_template(normalized)
+        if fixed is not None:
+            logger.info(
+                "Fixed catalog match: %s (score=%.1f)",
+                fixed.template.id,
+                fixed.score,
+            )
+            return _dedupe_events(_emit_fixed_template(text, fixed))
+
         events: list[BattleLogEvent] = []
 
         for multi_parser in (_parse_stat_changes, _parse_switch):
             events.extend(multi_parser(normalized))
 
+        # Fixed catalog covers weather / terrain / side conditions / plain
+        # fail strings when they match; legacy remains for tokenized messages
+        # and trick-room start.
         for single_parser in (
             _parse_mega_evolution,
             _parse_move_used,
