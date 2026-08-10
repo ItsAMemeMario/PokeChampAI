@@ -7,17 +7,21 @@ from datetime import datetime
 from app.schema.battle_log import (
     AbilityTriggeredEvent,
     FaintEvent,
+    FieldEffectChangedEvent,
+    HeldItemChangedEvent,
     HPChangeEvent,
     ItemUsedEvent,
     LeadInEvent,
     MegaEvolutionEvent,
     MoveFailedEvent,
     MoveUsedEvent,
+    PerishSongStartedEvent,
     SideConditionEvent,
     StatChangeEvent,
     StatusAppliedEvent,
     StatusCuredEvent,
     SwitchInEvent,
+    SwitchLockStartedEvent,
     SwitchOutEvent,
     TerrainEndEvent,
     TerrainStartEvent,
@@ -725,3 +729,191 @@ Jolly Nature
     assert state.player.slot_1.revealed_ability == "Hospitality"
     assert state.player.slot_1.revealed_item == "Sitrus Berry"
     assert "Matcha Gotcha" in state.player.slot_1.revealed_moves
+
+
+def test_spikes_layers_do_not_touch_toxic_spikes() -> None:
+    state = empty_game_state()
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Spikes",
+            side="opponent",
+            condition="spikes",
+        ),
+    )
+    assert state.opponent.hazards.spikes == 1
+    assert state.opponent.hazards.toxic_spikes == 0
+
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Spikes again",
+            side="opponent",
+            condition="spikes",
+        ),
+    )
+    assert state.opponent.hazards.spikes == 2
+    assert state.opponent.hazards.toxic_spikes == 0
+
+
+def test_side_condition_end_clears_screens_and_hazards() -> None:
+    state = empty_game_state()
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Reflect",
+            side="player",
+            condition="reflect",
+        ),
+    )
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Sticky Web",
+            side="opponent",
+            condition="sticky_web",
+        ),
+    )
+    assert state.player.reflect_turns == 5
+    assert state.opponent.hazards.sticky_web == 1
+
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Reflect wore off",
+            side="player",
+            condition="reflect",
+            action="end",
+        ),
+    )
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Web cleared",
+            side="opponent",
+            condition="sticky_web",
+            action="end",
+        ),
+    )
+    assert state.player.reflect_turns == 0
+    assert state.opponent.hazards.sticky_web == 0
+
+
+def test_perish_song_and_fairy_lock_tick_on_turn_start() -> None:
+    state = _game_state(
+        player_slot_1=_active("Garchomp"),
+        opponent_slot_1=_active("Incineroar"),
+    )
+    state = apply_event(
+        state,
+        PerishSongStartedEvent(
+            raw_text="Perish Song",
+            turns_remaining=3,
+            affected=[
+                _poke("Garchomp"),
+                _poke("Incineroar", side="opponent"),
+            ],
+        ),
+    )
+    state = apply_event(
+        state,
+        SwitchLockStartedEvent(raw_text="Fairy Lock", scope="all_active"),
+    )
+    assert state.player.slot_1 is not None
+    assert state.player.slot_1.perish_turns == 3
+    assert state.field.fairy_lock_turns == 2
+
+    state = apply_event(state, TurnStartEvent(raw_text="Turn 2", turn_number=2))
+    assert state.player.slot_1.perish_turns == 2
+    assert state.opponent.slot_1 is not None
+    assert state.opponent.slot_1.perish_turns == 2
+    assert state.field.fairy_lock_turns == 1
+
+
+def test_weather_suppression_preserves_underlying_weather() -> None:
+    state = empty_game_state()
+    state = apply_event(
+        state,
+        WeatherStartEvent(raw_text="sun", weather="sunny"),
+    )
+    state = apply_event(
+        state,
+        FieldEffectChangedEvent(
+            raw_text="Cloud Nine",
+            effect="weather_suppression",
+            action="start",
+        ),
+    )
+    assert state.field.weather == "sun"
+    assert state.field.weather_suppressed is True
+
+    state = apply_event(
+        state,
+        FieldEffectChangedEvent(
+            raw_text="Cloud Nine ended",
+            effect="weather_suppression",
+            action="end",
+        ),
+    )
+    assert state.field.weather == "sun"
+    assert state.field.weather_suppressed is False
+
+
+def test_held_item_lost_clears_revealed_item() -> None:
+    state = _game_state(
+        opponent_slot_1=_active("Incineroar", revealed_item="Safety Goggles"),
+    )
+    state = apply_event(
+        state,
+        HeldItemChangedEvent(
+            raw_text="Incineroar lost its Safety Goggles!",
+            pokemon=_poke("Incineroar", side="opponent"),
+            change="lost",
+            item="Safety Goggles",
+        ),
+    )
+    assert state.opponent.slot_1 is not None
+    assert state.opponent.slot_1.revealed_item == "Safety Goggles"
+    assert state.opponent.slot_1.item_state == "lost"
+
+
+def test_mega_evolution_sets_mega_used() -> None:
+    state = _game_state(opponent_slot_1=_active("Scizor"))
+    state = apply_event(
+        state,
+        MegaEvolutionEvent(
+            raw_text="Mega Evolved",
+            pokemon=_poke("Scizor", "opponent"),
+            variant="regular",
+        ),
+    )
+    assert state.opponent.mega_used is True
+
+
+def test_rebuild_replays_completer_patched_targets() -> None:
+    """After completer fills move targets, rebuild must keep board + log in sync."""
+    store = SessionStore()
+    store.game_state = _game_state(
+        player_slot_1=_active("Garchomp"),
+        player_slot_2=_active("Sinistcha"),
+        opponent_slot_1=_active("Incineroar"),
+        opponent_slot_2=_active("Aerodactyl"),
+    )
+    store.append_battle_log(TurnStartEvent(raw_text="Turn 1", turn_number=1))
+    store.append_battle_log(
+        MoveUsedEvent(
+            raw_text="Garchomp used Earthquake!",
+            timestamp=datetime(2026, 1, 1),
+            actor=_poke("Garchomp"),
+            move="Earthquake",
+            targets=[],
+        )
+    )
+    move = store.battle_logs[1][1]
+    assert move.type == "move_used"
+    assert len(move.targets) == 3
+    assert store.game_state is not None
+    assert store.game_state.player.slot_1 is not None
+    assert store.game_state.player.slot_1.species == "Garchomp"
+    assert store.game_state.opponent.slot_1 is not None
+    assert store.game_state.opponent.slot_1.species == "Incineroar"

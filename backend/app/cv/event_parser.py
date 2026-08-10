@@ -35,6 +35,7 @@ from app.data.abilities import REGULATION_MB_ABILITIES
 from app.data.items import REGULATION_MB_ITEMS, is_regulation_mb_item
 from app.data.moves import REGULATION_MB_MOVES
 from app.schema.common import Pokemon, Side, Slot
+from app.util.event_identity import semantic_key
 from app.util.legal_snap import snap_to_legal
 
 logger = logging.getLogger(__name__)
@@ -776,30 +777,11 @@ def parse_battle_text(
             _OPPONENT_SPECIES.reset(opponent_token)
 
 
-def _event_dedupe_key(event: BattleLogEvent) -> tuple:
-    key: list[object] = [event.type, event.raw_text]
-    if isinstance(event, LeadInEvent):
-        key.extend([event.side, event.slot_1.species, event.slot_2.species])
-        return tuple(key)
-    pokemon = getattr(event, "pokemon", None) or getattr(event, "actor", None)
-    if pokemon is not None:
-        key.extend([pokemon.species, pokemon.side, pokemon.slot])
-    if event.type == "stat_change":
-        key.extend([event.stat, event.stages_delta])
-    if event.type in {"move_used", "move_failed"}:
-        key.append(event.move)
-    if event.type in {"status_applied", "status_cured"}:
-        key.append(event.status)
-    if event.type in {"volatile_applied", "volatile_cured"}:
-        key.append(event.volatile)
-    return tuple(key)
-
-
 def _dedupe_events(events: Iterable[BattleLogEvent]) -> list[BattleLogEvent]:
     seen: set[tuple] = set()
     unique: list[BattleLogEvent] = []
     for event in events:
-        key = _event_dedupe_key(event)
+        key = semantic_key(event, include_raw_text=True)
         if key in seen:
             continue
         seen.add(key)

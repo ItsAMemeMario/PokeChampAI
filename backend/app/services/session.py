@@ -6,6 +6,7 @@ from app.schema.battle_log import BattleLogEvent, LeadInEvent, MoveUsedEvent, Tu
 from app.schema.gamestate import GameState
 from app.schema.suggestions import TeamPreviewSuggestion, TurnSuggestion
 from app.schema.team import PlayerTeam
+from app.util.event_identity import semantic_key
 
 import logging
 
@@ -29,6 +30,9 @@ class SessionStore:
         self.cv_running: bool = False
         self.adb_connected: bool = False
         self.game_state: GameState | None = None
+        # Baseline for rebuild_game_state_from_logs (seed / test-primed board).
+        # Captured once before the first log replay; cleared on begin_battle.
+        self._state_origin: GameState | None = None
         # Indexed by turn number (1-based). Index 0 is unused.
         # Each turn list starts with a TurnStartEvent.
         self.battle_logs: list[list[BattleLogEvent]] = [[]]
@@ -58,6 +62,7 @@ class SessionStore:
         """
         self.turn_number = 0
         self.game_state = None
+        self._state_origin = None
         self.battle_logs = [[]]
         self.opponent_team_species = None
         self.player_selected_species = None
@@ -115,21 +120,22 @@ class SessionStore:
                     )
 
             turn_logs = self.battle_logs[turn]
-            event_key = _semantic_key(event)
+            event_key = semantic_key(event)
             if turn_logs and _is_ocr_reread(turn_logs[-1], event):
                 turn_logs[-1] = event
-            elif any(_semantic_key(existing) == event_key for existing in turn_logs):
+            elif any(semantic_key(existing) == event_key for existing in turn_logs):
                 return []
             else:
                 turn_logs.append(event)
 
         # Local imports avoid circular dependencies at module load time.
         from app.services.battle_log_completer import complete_battle_logs
-        from app.services.gamestate_reducer import apply_event_to_store
+        from app.services.gamestate_reducer import rebuild_game_state_from_logs
 
         patched = complete_battle_logs(self)
-        # Apply the (possibly completer-patched) event at the end of this turn.
-        apply_event_to_store(self, self.battle_logs[turn][-1])
+        # Always replay from logs so completer patches and OCR rereads cannot
+        # leave GameState out of sync with the authoritative event list.
+        rebuild_game_state_from_logs(self)
 
         # Live dashboard: push log patches, the appended event, and latest state.
         from app.services.ws_hub import (
@@ -166,43 +172,20 @@ def _is_ocr_reread(previous: BattleLogEvent, new: BattleLogEvent) -> bool:
     if prev_mon.side != new_mon.side:
         return False
     # Dual switch-ins are different species; only collapse same-species jitter.
-    if new.type in {"switch_in", "switch_out", "faint", "item_used"}:
+    if new.type in {"switch_in", "switch_out", "faint", "item_used", "held_item_changed"}:
         return prev_mon.species == new_mon.species
-    if new.type in {"stat_change", "status_applied", "status_cured", "volatile_applied", "volatile_cured"}:
+    if new.type in {
+        "stat_change",
+        "stat_stage_operation",
+        "status_applied",
+        "status_cured",
+        "volatile_applied",
+        "volatile_cured",
+        "move_availability_changed",
+        "move_outcome",
+    }:
         return prev_mon.species == new_mon.species
     return False
-
-
-def _semantic_key(event: BattleLogEvent) -> tuple:
-    """Turn-level identity used to drop late re-emits of the same CV event."""
-    key: list[object] = [event.type]
-    if isinstance(event, LeadInEvent):
-        key.extend([event.side, event.slot_1.species, event.slot_2.species])
-        return tuple(key)
-    pokemon = getattr(event, "pokemon", None) or getattr(event, "actor", None)
-    if pokemon is not None:
-        # Match OCR fingerprints: switch identity is species+side, not slot.
-        if event.type in {"switch_in", "switch_out"}:
-            key.extend([pokemon.species, pokemon.side])
-        else:
-            key.extend([pokemon.species, pokemon.side, pokemon.slot])
-    if event.type == "stat_change":
-        key.extend(
-            [getattr(event, "stat", None), getattr(event, "stages_delta", None)]
-        )
-    if event.type in {"move_used", "move_failed"}:
-        key.append(getattr(event, "move", None))
-    if event.type == "item_used":
-        key.append(getattr(event, "item", None))
-    if event.type == "ability_triggered":
-        key.append(getattr(event, "ability", None))
-    if event.type in {"status_applied", "status_cured", "volatile_applied", "volatile_cured"}:
-        key.append(getattr(event, "status", None) or getattr(event, "volatile", None))
-    if event.type in {"weather_start", "weather_end"}:
-        key.append(getattr(event, "weather", None))
-    if event.type in {"terrain_start", "terrain_end"}:
-        key.append(getattr(event, "terrain", None))
-    return tuple(key)
 
 
 session_store = SessionStore()

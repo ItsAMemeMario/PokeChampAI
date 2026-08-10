@@ -124,11 +124,28 @@ function reduceMessage(
         connected: true,
         battleLogs: appendLog(prev.battleLogs, message.payload),
       };
-    case "log_patched":
-      // Completer rewrites structured fields in place on the server. The live
-      // log already received the event via "log" (often already patched); do
-      // not append a second row that looks like a duplicate.
-      return { ...prev, connected: true };
+    case "log_patched": {
+      // Completer rewrites structured fields in place. Prefer matching by
+      // timestamp+type within the flattened live log; fall back to no-op.
+      const { event: patched } = message.payload;
+      const logs = prev.battleLogs;
+      let index = -1;
+      for (let i = logs.length - 1; i >= 0; i -= 1) {
+        if (
+          logs[i].timestamp === patched.timestamp &&
+          logs[i].type === patched.type
+        ) {
+          index = i;
+          break;
+        }
+      }
+      if (index < 0) {
+        return { ...prev, connected: true };
+      }
+      const nextLogs = [...logs];
+      nextLogs[index] = patched;
+      return { ...prev, connected: true, battleLogs: nextLogs };
+    }
     case "team_preview":
       return {
         ...prev,

@@ -5,6 +5,7 @@ from app.services.gamestate_reducer import (
     apply_events,
     empty_game_state,
     ensure_seeded,
+    rebuild_game_state_from_logs,
     seed_from_session,
     seed_game_state,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "complete_battle_logs",
     "empty_game_state",
     "ensure_seeded",
+    "rebuild_game_state_from_logs",
     "seed_from_session",
     "seed_game_state",
     "session_store",
