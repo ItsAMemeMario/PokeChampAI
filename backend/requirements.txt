@@ -11,3 +11,4 @@ numpy
 Pillow
 websockets
 rapidfuzz
+frozendict

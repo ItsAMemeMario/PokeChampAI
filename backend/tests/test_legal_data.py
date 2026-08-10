@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from app.cv.event_parser import parse_battle_text, parse_side_banner
 from app.data.abilities import REGULATION_MB_ABILITIES
+from app.data.learnsets import REGULATION_MB_LEARNSETS
 from app.data.moves import ALL_ADJACENT_MOVES, REGULATION_MB_MOVES, spread_kind
 from app.data.species import REGULATION_MB_SPECIES
 from app.schema.team import PlayerPokemon, parse_team
@@ -19,6 +20,17 @@ def test_species_includes_alternate_forms_not_megas() -> None:
     assert "Venusaur" in REGULATION_MB_SPECIES
     assert "Venusaur-Mega" not in REGULATION_MB_SPECIES
     assert "Charizard-Mega-X" not in REGULATION_MB_SPECIES
+
+
+def test_learnsets_cover_all_species_and_resolve_names() -> None:
+    assert set(REGULATION_MB_LEARNSETS) == REGULATION_MB_SPECIES
+    assert "Energy Ball" in REGULATION_MB_LEARNSETS["Venusaur"]
+    assert "Earthquake" in REGULATION_MB_LEARNSETS["Garchomp"]
+    assert "Light of Ruin" in REGULATION_MB_LEARNSETS["Floette-Eternal"]
+    # Size formes without their own Champions learnset inherit the base set.
+    assert REGULATION_MB_LEARNSETS["Gourgeist-Large"] == REGULATION_MB_LEARNSETS["Gourgeist"]
+    assert REGULATION_MB_LEARNSETS["Gourgeist-Small"] == REGULATION_MB_LEARNSETS["Gourgeist"]
+    assert REGULATION_MB_LEARNSETS["Gourgeist-Super"] == REGULATION_MB_LEARNSETS["Gourgeist"]
 
 
 def test_abilities_include_mega_only_abilities() -> None:
