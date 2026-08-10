@@ -16,13 +16,18 @@ from app.schema.battle_log import (
     SideConditionEvent,
     StatChangeEvent,
     StatusAppliedEvent,
+    StatusCuredEvent,
     SwitchInEvent,
     SwitchOutEvent,
-    TerrainChangeEvent,
-    TrickRoomChangeEvent,
+    TerrainEndEvent,
+    TerrainStartEvent,
+    TrickRoomEndEvent,
+    TrickRoomStartEvent,
     TurnStartEvent,
     VolatileAppliedEvent,
-    WeatherChangeEvent,
+    VolatileCuredEvent,
+    WeatherEndEvent,
+    WeatherStartEvent,
 )
 from app.schema.common import Pokemon
 from app.schema.gamestate import (
@@ -186,6 +191,68 @@ def test_status_volatile_faint() -> None:
     assert "confused" in mon.volatile_statuses
     assert mon.hp_percentage == 0
 
+
+def test_status_and_volatile_cured() -> None:
+    state = _game_state(opponent_slot_1=_active("Scizor", 80))
+    state = apply_event(
+        state,
+        StatusAppliedEvent(
+            raw_text="burned",
+            pokemon=_poke("Scizor", "opponent"),
+            status="brn",
+        ),
+    )
+    state = apply_event(
+        state,
+        VolatileAppliedEvent(
+            raw_text="confused",
+            pokemon=_poke("Scizor", "opponent"),
+            volatile="confused",
+        ),
+    )
+    state = apply_event(
+        state,
+        StatusCuredEvent(
+            raw_text="Scizor's burn was healed!",
+            pokemon=_poke("Scizor", "opponent"),
+            status="brn",
+        ),
+    )
+    state = apply_event(
+        state,
+        VolatileCuredEvent(
+            raw_text="Scizor snapped out of its confusion!",
+            pokemon=_poke("Scizor", "opponent"),
+            volatile="confused",
+        ),
+    )
+    mon = state.opponent.slot_1
+    assert mon is not None
+    assert mon.status_condition == "none"
+    assert "confused" not in mon.volatile_statuses
+
+
+def test_status_cured_clears_tox_via_psn_end_text() -> None:
+    state = _game_state(player_slot_1=_active("Garchomp", 60))
+    state = apply_event(
+        state,
+        StatusAppliedEvent(
+            raw_text="badly poisoned",
+            pokemon=_poke("Garchomp"),
+            status="tox",
+        ),
+    )
+    state = apply_event(
+        state,
+        StatusCuredEvent(
+            raw_text="Garchomp was cured of its poisoning!",
+            pokemon=_poke("Garchomp"),
+            status="psn",
+        ),
+    )
+    mon = state.player.slot_1
+    assert mon is not None
+    assert mon.status_condition == "none"
 
 def test_switch_out_and_in() -> None:
     state = seed_game_state(
@@ -366,20 +433,20 @@ def test_field_and_side_conditions() -> None:
     state = empty_game_state()
     state = apply_event(
         state,
-        WeatherChangeEvent(raw_text="sun", weather="sunny"),
+        WeatherStartEvent(raw_text="sun", weather="sunny"),
     )
     assert state.field.weather == "sun"
     assert state.field.weather_turns == 5
 
     state = apply_event(
         state,
-        TerrainChangeEvent(raw_text="psychic", terrain="psychic_terrain"),
+        TerrainStartEvent(raw_text="psychic", terrain="psychic_terrain"),
     )
     assert state.field.terrain == "psychic"
 
     state = apply_event(
         state,
-        TrickRoomChangeEvent(raw_text="TR", active=True),
+        TrickRoomStartEvent(raw_text="TR"),
     )
     assert state.field.trick_room_turns == 5
 
@@ -406,21 +473,24 @@ def test_field_and_side_conditions() -> None:
     # Expiry is via battle text, not the turn ticker.
     state = apply_event(
         state,
-        WeatherChangeEvent(raw_text="The sunlight faded.", weather="none"),
+        WeatherEndEvent(raw_text="The sunlight faded.", weather="sunny"),
     )
     assert state.field.weather == "none"
     assert state.field.weather_turns == 0
 
     state = apply_event(
         state,
-        TerrainChangeEvent(raw_text="The psychic terrain disappeared.", terrain="none"),
+        TerrainEndEvent(
+            raw_text="The weirdness disappeared from the battlefield!",
+            terrain="psychic_terrain",
+        ),
     )
     assert state.field.terrain == "none"
     assert state.field.terrain_turns == 0
 
     state = apply_event(
         state,
-        TrickRoomChangeEvent(raw_text="The twisted dimensions returned to normal!", active=False),
+        TrickRoomEndEvent(raw_text="The twisted dimensions returned to normal!"),
     )
     assert state.field.trick_room_turns == 0
 

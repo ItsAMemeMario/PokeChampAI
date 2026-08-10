@@ -18,7 +18,9 @@ from app.schema.battle_log import (
     MoveUsedEvent,
     StatChangeEvent,
     StatusAppliedEvent,
+    StatusCuredEvent,
     VolatileAppliedEvent,
+    VolatileCuredEvent,
 )
 from app.schema.common import Pokemon, Side, Slot
 from app.schema.gamestate import ActivePokemon, GameState, SideState
@@ -134,7 +136,14 @@ def _complete_ability_triggered(
     seen: set[str] = set()
     for later in following:
         if not isinstance(
-            later, (StatChangeEvent, StatusAppliedEvent, VolatileAppliedEvent)
+            later,
+            (
+                StatChangeEvent,
+                StatusAppliedEvent,
+                StatusCuredEvent,
+                VolatileAppliedEvent,
+                VolatileCuredEvent,
+            ),
         ):
             continue
         text = later.raw_text.strip()

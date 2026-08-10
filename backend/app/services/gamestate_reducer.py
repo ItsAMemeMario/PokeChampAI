@@ -21,13 +21,18 @@ from app.schema.battle_log import (
     SideConditionEvent,
     StatChangeEvent,
     StatusAppliedEvent,
+    StatusCuredEvent,
     SwitchInEvent,
     SwitchOutEvent,
-    TerrainChangeEvent,
-    TrickRoomChangeEvent,
+    TerrainEndEvent,
+    TerrainStartEvent,
+    TrickRoomStartEvent,
+    TrickRoomEndEvent,
     TurnStartEvent,
     VolatileAppliedEvent,
-    WeatherChangeEvent,
+    VolatileCuredEvent,
+    WeatherEndEvent,
+    WeatherStartEvent,
 )
 from app.schema.common import Pokemon, Side, Slot
 from app.schema.gamestate import (
@@ -54,7 +59,6 @@ _WEATHER_TO_FIELD: dict[str, str] = {
     "rain": "rain",
     "sandstorm": "sand",
     "snow": "snow",
-    "none": "none",
 }
 
 _TERRAIN_TO_FIELD: dict[str, str] = {
@@ -62,7 +66,6 @@ _TERRAIN_TO_FIELD: dict[str, str] = {
     "grassy_terrain": "grassy",
     "misty_terrain": "misty",
     "psychic_terrain": "psychic",
-    "none": "none",
 }
 
 _PROTECT_MOVES = frozenset(
@@ -185,8 +188,12 @@ def apply_event(
         return _apply_stat_change(state, event)
     if isinstance(event, StatusAppliedEvent):
         return _apply_status(state, event)
+    if isinstance(event, StatusCuredEvent):
+        return _apply_status_cured(state, event)
     if isinstance(event, VolatileAppliedEvent):
         return _apply_volatile(state, event)
+    if isinstance(event, VolatileCuredEvent):
+        return _apply_volatile_cured(state, event)
     if isinstance(event, FaintEvent):
         return _apply_faint(state, event)
     if isinstance(event, SwitchOutEvent):
@@ -197,11 +204,15 @@ def apply_event(
         return _apply_switch_in(state, event, player_team=player_team)
     if isinstance(event, MegaEvolutionEvent):
         return _apply_mega(state, event)
-    if isinstance(event, WeatherChangeEvent):
-        return _apply_weather(state, event)
-    if isinstance(event, TerrainChangeEvent):
-        return _apply_terrain(state, event)
-    if isinstance(event, TrickRoomChangeEvent):
+    if isinstance(event, WeatherStartEvent):
+        return _apply_weather_start(state, event)
+    if isinstance(event, WeatherEndEvent):
+        return _apply_weather_end(state, event)
+    if isinstance(event, TerrainStartEvent):
+        return _apply_terrain_start(state, event)
+    if isinstance(event, TerrainEndEvent):
+        return _apply_terrain_end(state, event)
+    if isinstance(event, TrickRoomStartEvent) or isinstance(event, TrickRoomEndEvent):
         return _apply_trick_room(state, event)
     if isinstance(event, SideConditionEvent):
         return _apply_side_condition(state, event)
@@ -333,11 +344,34 @@ def _apply_status(state: GameState, event: StatusAppliedEvent) -> GameState:
     return _update_active(state, event.pokemon, update)
 
 
+def _apply_status_cured(state: GameState, event: StatusCuredEvent) -> GameState:
+    def update(active: ActivePokemon) -> ActivePokemon:
+        current = active.status_condition
+        # tox.end redirects to psn.end text in Showdown; clear either poison.
+        if current == event.status:
+            return active.model_copy(update={"status_condition": "none"})
+        if event.status == "psn" and current == "tox":
+            return active.model_copy(update={"status_condition": "none"})
+        if event.status == "tox" and current == "psn":
+            return active.model_copy(update={"status_condition": "none"})
+        return active
+
+    return _update_active(state, event.pokemon, update)
+
+
 def _apply_volatile(state: GameState, event: VolatileAppliedEvent) -> GameState:
     def update(active: ActivePokemon) -> ActivePokemon:
         vols = list(active.volatile_statuses)
         if event.volatile not in vols:
             vols.append(event.volatile)
+        return active.model_copy(update={"volatile_statuses": vols})
+
+    return _update_active(state, event.pokemon, update)
+
+
+def _apply_volatile_cured(state: GameState, event: VolatileCuredEvent) -> GameState:
+    def update(active: ActivePokemon) -> ActivePokemon:
+        vols = [v for v in active.volatile_statuses if v != event.volatile]
         return active.model_copy(update={"volatile_statuses": vols})
 
     return _update_active(state, event.pokemon, update)
@@ -439,32 +473,49 @@ def _apply_mega(state: GameState, event: MegaEvolutionEvent) -> GameState:
     return _update_active(state, event.pokemon, update)
 
 
-def _apply_weather(state: GameState, event: WeatherChangeEvent) -> GameState:
+def _apply_weather_start(state: GameState, event: WeatherStartEvent) -> GameState:
     weather = _WEATHER_TO_FIELD.get(event.weather, "none")
-    turns = 0 if weather == "none" else _WEATHER_TURNS
     return state.model_copy(
         update={
             "field": state.field.model_copy(
-                update={"weather": weather, "weather_turns": turns}
+                update={"weather": weather, "weather_turns": _WEATHER_TURNS}
             )
         }
     )
 
 
-def _apply_terrain(state: GameState, event: TerrainChangeEvent) -> GameState:
+def _apply_weather_end(state: GameState, event: WeatherEndEvent) -> GameState:
+    return state.model_copy(
+        update={
+            "field": state.field.model_copy(
+                update={"weather": "none", "weather_turns": 0}
+            )
+        }
+    )
+
+
+def _apply_terrain_start(state: GameState, event: TerrainStartEvent) -> GameState:
     terrain = _TERRAIN_TO_FIELD.get(event.terrain, "none")
-    turns = 0 if terrain == "none" else _TERRAIN_TURNS
     return state.model_copy(
         update={
             "field": state.field.model_copy(
-                update={"terrain": terrain, "terrain_turns": turns}
+                update={"terrain": terrain, "terrain_turns": _TERRAIN_TURNS}
             )
         }
     )
 
 
-def _apply_trick_room(state: GameState, event: TrickRoomChangeEvent) -> GameState:
-    turns = _TRICK_ROOM_TURNS if event.active else 0
+def _apply_terrain_end(state: GameState, event: TerrainEndEvent) -> GameState:
+    return state.model_copy(
+        update={
+            "field": state.field.model_copy(
+                update={"terrain": "none", "terrain_turns": 0}
+            )
+        }
+    )
+
+def _apply_trick_room(state: GameState, event: TrickRoomStartEvent | TrickRoomEndEvent) -> GameState:
+    turns = _TRICK_ROOM_TURNS if isinstance(event, TrickRoomStartEvent) else 0
     return state.model_copy(
         update={
             "field": state.field.model_copy(update={"trick_room_turns": turns})

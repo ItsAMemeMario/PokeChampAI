@@ -155,7 +155,7 @@ def _is_ocr_reread(previous: BattleLogEvent, new: BattleLogEvent) -> bool:
         return False
     if isinstance(new, MoveUsedEvent) and isinstance(previous, MoveUsedEvent):
         # Same side's move text often re-OCRs with different spellings before clear.
-        return previous.actor.side == new.actor.side
+        return previous.actor.species == new.actor.species and previous.actor.side == new.actor.side
     if isinstance(new, LeadInEvent) and isinstance(previous, LeadInEvent):
         return previous.side == new.side
 
@@ -168,7 +168,7 @@ def _is_ocr_reread(previous: BattleLogEvent, new: BattleLogEvent) -> bool:
     # Dual switch-ins are different species; only collapse same-species jitter.
     if new.type in {"switch_in", "switch_out", "faint", "item_used"}:
         return prev_mon.species == new_mon.species
-    if new.type in {"stat_change", "status_applied", "volatile_applied"}:
+    if new.type in {"stat_change", "status_applied", "status_cured", "volatile_applied", "volatile_cured"}:
         return prev_mon.species == new_mon.species
     return False
 
@@ -196,8 +196,12 @@ def _semantic_key(event: BattleLogEvent) -> tuple:
         key.append(getattr(event, "item", None))
     if event.type == "ability_triggered":
         key.append(getattr(event, "ability", None))
-    if event.type in {"status_applied", "volatile_applied"}:
+    if event.type in {"status_applied", "status_cured", "volatile_applied", "volatile_cured"}:
         key.append(getattr(event, "status", None) or getattr(event, "volatile", None))
+    if event.type in {"weather_start", "weather_end"}:
+        key.append(getattr(event, "weather", None))
+    if event.type in {"terrain_start", "terrain_end"}:
+        key.append(getattr(event, "terrain", None))
     return tuple(key)
 
 

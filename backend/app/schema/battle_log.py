@@ -84,9 +84,19 @@ class StatusAppliedEvent(BattleLogEventBase):
     pokemon: Pokemon
     status: Literal["brn", "par", "slp", "psn", "tox", "frz"]
 
+class StatusCuredEvent(BattleLogEventBase):
+    type: Literal["status_cured"] = "status_cured"
+    pokemon: Pokemon
+    status: Literal["brn", "par", "slp", "psn", "tox", "frz"]
+
 
 class VolatileAppliedEvent(BattleLogEventBase):
     type: Literal["volatile_applied"] = "volatile_applied"
+    pokemon: Pokemon
+    volatile: Literal["taunted", "encore", "confused"]
+
+class VolatileCuredEvent(BattleLogEventBase):
+    type: Literal["volatile_cured"] = "volatile_cured"
     pokemon: Pokemon
     volatile: Literal["taunted", "encore", "confused"]
 
@@ -96,22 +106,39 @@ class FaintEvent(BattleLogEventBase):
     pokemon: Pokemon
 
 
-Weather = Literal["sunny", "rain", "sandstorm", "snow", "none"]
-class WeatherChangeEvent(BattleLogEventBase):
-    type: Literal["weather_change"] = "weather_change"
+Weather = Literal["sunny", "rain", "sandstorm", "snow"]
+class WeatherStartEvent(BattleLogEventBase):
+    type: Literal["weather_start"] = "weather_start"
     weather: Weather
 
-Terrain = Literal["electric_terrain", "grassy_terrain", "misty_terrain", "psychic_terrain", "none"]
-class TerrainChangeEvent(BattleLogEventBase):
-    type: Literal["terrain_change"] = "terrain_change"
+class WeatherEndEvent(BattleLogEventBase):
+    type: Literal["weather_end"] = "weather_end"
+    weather: Weather
+
+Terrain = Literal["electric_terrain", "grassy_terrain", "misty_terrain", "psychic_terrain"]
+class TerrainStartEvent(BattleLogEventBase):
+    type: Literal["terrain_start"] = "terrain_start"
+    terrain: Terrain
+
+class TerrainEndEvent(BattleLogEventBase):
+    type: Literal["terrain_end"] = "terrain_end"
     terrain: Terrain
 
 
-class TrickRoomChangeEvent(BattleLogEventBase):
-    type: Literal["trick_room_change"] = "trick_room_change"
-    active: bool
+class TrickRoomStartEvent(BattleLogEventBase):
+    type: Literal["trick_room_start"] = "trick_room_start"
 
-FieldEvent = Union[WeatherChangeEvent, TerrainChangeEvent, TrickRoomChangeEvent]
+class TrickRoomEndEvent(BattleLogEventBase):
+    type: Literal["trick_room_end"] = "trick_room_end"
+
+FieldEvent = Union[
+    WeatherStartEvent,
+    WeatherEndEvent,
+    TerrainStartEvent,
+    TerrainEndEvent,
+    TrickRoomStartEvent,
+    TrickRoomEndEvent,
+]
 
 class SideConditionEvent(BattleLogEventBase):
     type: Literal["side_condition"] = "side_condition"
@@ -141,7 +168,9 @@ BattleLogEvent = Annotated[
         HPChangeEvent,
         StatChangeEvent,
         StatusAppliedEvent,
+        StatusCuredEvent,
         VolatileAppliedEvent,
+        VolatileCuredEvent,
         FaintEvent,
         FieldEvent,
         SideConditionEvent,

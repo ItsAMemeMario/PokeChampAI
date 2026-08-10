@@ -253,7 +253,7 @@ def test_sunny_weather_starts(event_engine: EventOcrEngine, region_config) -> No
     assert abilities[0].actor.slot == 1
     assert abilities[0].ability == "Drought"
 
-    weather = _events_of_type(events, "weather_change")
+    weather = _events_of_type(events, "weather_start")
     assert len(weather) == 1
     assert weather[0].weather == "sunny"
 

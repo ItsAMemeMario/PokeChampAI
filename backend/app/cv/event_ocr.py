@@ -192,8 +192,12 @@ def _event_fingerprint(event: BattleLogEvent) -> tuple:
         key.append(getattr(event, "item", None))
     if event.type == "ability_triggered":
         key.append(getattr(event, "ability", None))
-    if event.type in {"status_applied", "volatile_applied"}:
+    if event.type in {"status_applied", "status_cured", "volatile_applied", "volatile_cured"}:
         key.append(getattr(event, "status", None) or getattr(event, "volatile", None))
+    if event.type in {"weather_start", "weather_end"}:
+        key.append(getattr(event, "weather", None))
+    if event.type in {"terrain_start", "terrain_end"}:
+        key.append(getattr(event, "terrain", None))
     return tuple(key)
 
 

@@ -19,12 +19,17 @@ from app.schema.battle_log import (
     SideConditionEvent,
     StatChangeEvent,
     StatusAppliedEvent,
+    StatusCuredEvent,
     SwitchInEvent,
     SwitchOutEvent,
-    TerrainChangeEvent,
-    TrickRoomChangeEvent,
+    TerrainEndEvent,
+    TerrainStartEvent,
+    TrickRoomStartEvent,
+    TrickRoomEndEvent,
     VolatileAppliedEvent,
-    WeatherChangeEvent,
+    VolatileCuredEvent,
+    WeatherEndEvent,
+    WeatherStartEvent,
 )
 from app.data.abilities import REGULATION_MB_ABILITIES
 from app.data.items import REGULATION_MB_ITEMS, is_regulation_mb_item
@@ -132,11 +137,12 @@ _STAT_DIRECTION_RE = re.compile(
     re.IGNORECASE,
 )
 _OPPONENT_PREFIX_RE = re.compile(r"^(?:the\s+)?opposing\s+", re.IGNORECASE)
-_STATUS_RE = re.compile(
+_STATUS_APPLIED_RE = re.compile(
     _OPPOSING + r"(?P<species>.+?)\s+"
     r"(?:"
     r"was\s+burned"
-    r"|is\s+paralyzed,\s+so\s+it\s+may\s+be\s+unable\s+to\s+move"
+    # Showdown: "[POKEMON] is paralyzed! It may be unable to move!"
+    r"|is\s+paralyzed[!.,]?\s*(?:It\s+)?may\s+be\s+unable\s+to\s+move"
     r"|was\s+badly\s+poisoned"
     r"|was\s+poisoned"
     r"|was\s+frozen\s+solid"
@@ -144,13 +150,31 @@ _STATUS_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
-_VOLATILE_RE = re.compile(
+# Showdown default.ts status/confusion `end` texts only (not endFromItem / etc.).
+_STATUS_CURED_RE = re.compile(
+    _OPPOSING
+    + r"(?P<species>.+?)"
+    r"(?:"
+    r"['\u2019]s\s+burn\s+was\s+healed"
+    r"|\s+thawed\s+out"
+    r"|\s+was\s+cured\s+of\s+paralysis"
+    r"|\s+was\s+cured\s+of\s+its\s+poisoning"
+    r"|\s+woke\s+up"
+    r")",
+    re.IGNORECASE,
+)
+_VOLATILE_APPLIED_RE = re.compile(
     _OPPOSING + r"(?P<species>.+?)\s+"
     r"(?:"
     r"fell\s+for\s+the\s+taunt"
     r"|must\s+do\s+an\s+encore"
     r"|became\s+confused"
     r")",
+    re.IGNORECASE,
+)
+# Confusion only for now
+_VOLATILE_CURED_RE = re.compile(
+    _OPPOSING + r"(?P<species>.+?)\s+snapped\s+out\s+of\s+(?:its\s+)?confusion",
     re.IGNORECASE,
 )
 _SIDE_CONDITION_RE = re.compile(
@@ -404,55 +428,65 @@ def _parse_stat_changes(text: str) -> list[StatChangeEvent]:
     return events
 
 
-def _parse_weather(text: str) -> WeatherChangeEvent | None:
+def _parse_weather(text: str) -> WeatherStartEvent | WeatherEndEvent | None:
     lowered = text.lower()
     if "sunlight" in lowered:
         logger.info("Parsing weather")
         if "faded" in lowered:
-            return WeatherChangeEvent(raw_text=text, weather="none")
-        return WeatherChangeEvent(raw_text=text, weather="sunny")
+            return WeatherEndEvent(raw_text=text, weather="sunny")
+        return WeatherStartEvent(raw_text=text, weather="sunny")
     if re.search(r"\brain\b", lowered):
         logger.info("Parsing weather")
         if "stopped" in lowered:
-            return WeatherChangeEvent(raw_text=text, weather="none")
-        return WeatherChangeEvent(raw_text=text, weather="rain")
+            return WeatherEndEvent(raw_text=text, weather="rain")
+        return WeatherStartEvent(raw_text=text, weather="rain")
     if "sandstorm" in lowered or "picked up" in lowered:
         logger.info("Parsing weather")
         if "subsided" in lowered:
-            return WeatherChangeEvent(raw_text=text, weather="none")
-        return WeatherChangeEvent(raw_text=text, weather="sandstorm")
+            return WeatherEndEvent(raw_text=text, weather="sandstorm")
+        return WeatherStartEvent(raw_text=text, weather="sandstorm")
     if re.search(r"\bsnow\b", lowered):
         logger.info("Parsing weather")
         if "stopped" in lowered:
-            return WeatherChangeEvent(raw_text=text, weather="none")
-        return WeatherChangeEvent(raw_text=text, weather="snow")
+            return WeatherEndEvent(raw_text=text, weather="snow")
+        return WeatherStartEvent(raw_text=text, weather="snow")
     return None
 
 
-def _parse_terrain(text: str) -> TerrainChangeEvent | None:
+def _parse_terrain(text: str) -> TerrainStartEvent | TerrainEndEvent | None:
     lowered = text.lower()
-    if "battlefield" in lowered:
-        logger.info("Parsing terrain")
-        if "electric" in lowered or "current" in lowered:
-            return TerrainChangeEvent(raw_text=text, terrain="electric_terrain")
-        if "grass" in lowered or "grew" in lowered:
-            return TerrainChangeEvent(raw_text=text, terrain="grassy_terrain")
-        if "mist" in lowered or "swirled" in lowered:
-            return TerrainChangeEvent(raw_text=text, terrain="misty_terrain")
+    if "battlefield" not in lowered:
+        return None
+    logger.info("Parsing terrain")
+    # End texts first — start cues like "electric" also appear in end lines.
+    if "disappeared" in lowered:
+        if "electric" in lowered:
+            return TerrainEndEvent(raw_text=text, terrain="electric_terrain")
+        if "grass" in lowered:
+            return TerrainEndEvent(raw_text=text, terrain="grassy_terrain")
+        if "mist" in lowered:
+            return TerrainEndEvent(raw_text=text, terrain="misty_terrain")
         if "weird" in lowered:
-            return TerrainChangeEvent(raw_text=text, terrain="psychic_terrain")
-        if "disappeared" in lowered:
-            return TerrainChangeEvent(raw_text=text, terrain="none")
+            return TerrainEndEvent(raw_text=text, terrain="psychic_terrain")
+        return None
+    if "electric" in lowered or "current" in lowered:
+        return TerrainStartEvent(raw_text=text, terrain="electric_terrain")
+    if "grass" in lowered or "grew" in lowered:
+        return TerrainStartEvent(raw_text=text, terrain="grassy_terrain")
+    if "mist" in lowered or "swirled" in lowered:
+        return TerrainStartEvent(raw_text=text, terrain="misty_terrain")
+    if "weird" in lowered:
+        return TerrainStartEvent(raw_text=text, terrain="psychic_terrain")
     return None
 
-
-def _parse_trick_room(text: str) -> TrickRoomChangeEvent | None:
+def _parse_trick_room(text: str) -> TrickRoomStartEvent | TrickRoomEndEvent | None:
     lowered = text.lower()
     if "twisted" in lowered or "dimensions" in lowered:
         logger.info("Parsing trick room")
         if "returned" in lowered or "normal" in lowered:
-            return TrickRoomChangeEvent(raw_text=text, active=False)
-        return TrickRoomChangeEvent(raw_text=text, active=True)
+            return TrickRoomEndEvent(raw_text=text)
+        else:
+            return TrickRoomStartEvent(raw_text=text)
     return None
 
 
@@ -482,11 +516,36 @@ def _parse_side_condition(text: str) -> SideConditionEvent | None:
     return SideConditionEvent(raw_text=text, side=side, condition=condition)  # type: ignore[arg-type]
 
 
-def _parse_status(text: str) -> StatusAppliedEvent | None:
-    match = _STATUS_RE.search(text)
+def _parse_status(text: str) -> StatusAppliedEvent | StatusCuredEvent | None:
+    cured = _STATUS_CURED_RE.search(text)
+    if cured:
+        logger.info("Parsing status cured")
+        species = cured.group("species").strip()
+        lowered = text.lower()
+        side = _side_from_text(text)
+        if "burn" in lowered:
+            status = "brn"
+        elif "paralysis" in lowered:
+            status = "par"
+        elif "poisoning" in lowered:
+            # tox.end redirects to psn.end in Showdown
+            status = "psn"
+        elif "thawed" in lowered:
+            status = "frz"
+        elif "woke" in lowered:
+            status = "slp"
+        else:
+            return None
+        return StatusCuredEvent(
+            raw_text=text,
+            pokemon=_pokemon(species, side),
+            status=status,  # type: ignore[arg-type]
+        )
+
+    match = _STATUS_APPLIED_RE.search(text)
     if not match:
         return None
-    logger.info("Parsing status")
+    logger.info("Parsing status applied")
     species = match.group("species").strip()
     lowered = text.lower()
     side = _side_from_text(text)
@@ -511,11 +570,20 @@ def _parse_status(text: str) -> StatusAppliedEvent | None:
     )
 
 
-def _parse_volatile(text: str) -> VolatileAppliedEvent | None:
-    match = _VOLATILE_RE.search(text)
+def _parse_volatile(text: str) -> VolatileAppliedEvent | VolatileCuredEvent | None:
+    cured = _VOLATILE_CURED_RE.search(text)
+    if cured:
+        logger.info("Parsing volatile cured")
+        return VolatileCuredEvent(
+            raw_text=text,
+            pokemon=_pokemon(cured.group("species").strip(), _side_from_text(text)),
+            volatile="confused",
+        )
+
+    match = _VOLATILE_APPLIED_RE.search(text)
     if not match:
         return None
-    logger.info("Parsing volatile")
+    logger.info("Parsing volatile applied")
     species = match.group("species").strip()
     lowered = text.lower()
     side = _side_from_text(text)
@@ -720,6 +788,10 @@ def _event_dedupe_key(event: BattleLogEvent) -> tuple:
         key.extend([event.stat, event.stages_delta])
     if event.type in {"move_used", "move_failed"}:
         key.append(event.move)
+    if event.type in {"status_applied", "status_cured"}:
+        key.append(event.status)
+    if event.type in {"volatile_applied", "volatile_cured"}:
+        key.append(event.volatile)
     return tuple(key)
 
 

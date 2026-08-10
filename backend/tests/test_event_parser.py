@@ -281,6 +281,110 @@ def test_parse_volatile_confused() -> None:
     assert events[0].volatile == "confused"
 
 
+def test_parse_volatile_confused_cured() -> None:
+    events = parse_battle_text("The opposing Whimsicott snapped out of its confusion!")
+    assert len(events) == 1
+    assert events[0].type == "volatile_cured"
+    assert events[0].pokemon.species == "Whimsicott"
+    assert events[0].pokemon.side == "opponent"
+    assert events[0].volatile == "confused"
+
+
+def test_parse_status_applied_showdown_starts() -> None:
+    cases = [
+        ("Incineroar was burned!", "brn", "player"),
+        ("The opposing Garchomp is paralyzed! It may be unable to move!", "par", "opponent"),
+        ("Rillaboom was poisoned!", "psn", "player"),
+        ("The opposing Whimsicott was badly poisoned!", "tox", "opponent"),
+        ("Landorus was frozen solid!", "frz", "player"),
+        ("The opposing Musharna fell asleep!", "slp", "opponent"),
+    ]
+    for text, status, side in cases:
+        events = parse_battle_text(text)
+        assert len(events) == 1, text
+        assert events[0].type == "status_applied", text
+        assert events[0].status == status, text
+        assert events[0].pokemon.side == side, text
+
+
+def test_parse_status_cured_showdown_ends() -> None:
+    cases = [
+        ("Incineroar's burn was healed!", "brn", "player"),
+        ("The opposing Garchomp was cured of paralysis!", "par", "opponent"),
+        ("Rillaboom was cured of its poisoning!", "psn", "player"),
+        ("Landorus thawed out!", "frz", "player"),
+        ("The opposing Musharna woke up!", "slp", "opponent"),
+    ]
+    for text, status, side in cases:
+        events = parse_battle_text(text)
+        assert len(events) == 1, text
+        assert events[0].type == "status_cured", text
+        assert events[0].status == status, text
+        assert events[0].pokemon.side == side, text
+
+
+def test_parse_trick_room_start_and_end() -> None:
+    start = parse_battle_text("The opposing Musharna twisted the dimensions!")
+    assert len(start) == 1
+    assert start[0].type == "trick_room_start"
+
+    end = parse_battle_text("The twisted dimensions returned to normal!")
+    assert len(end) == 1
+    assert end[0].type == "trick_room_end"
+
+
+def test_parse_weather_start_and_end() -> None:
+    starts = [
+        ("The sunlight turned harsh!", "sunny"),
+        ("It started to rain!", "rain"),
+        ("A sandstorm kicked up!", "sandstorm"),
+        ("It started to snow!", "snow"),
+    ]
+    for text, weather in starts:
+        events = parse_battle_text(text)
+        assert len(events) == 1, text
+        assert events[0].type == "weather_start", text
+        assert events[0].weather == weather, text
+
+    ends = [
+        ("The harsh sunlight faded.", "sunny"),
+        ("The rain stopped.", "rain"),
+        ("The sandstorm subsided.", "sandstorm"),
+        ("The snow stopped.", "snow"),
+    ]
+    for text, weather in ends:
+        events = parse_battle_text(text)
+        assert len(events) == 1, text
+        assert events[0].type == "weather_end", text
+        assert events[0].weather == weather, text
+
+
+def test_parse_terrain_start_and_end() -> None:
+    starts = [
+        ("An electric current ran across the battlefield!", "electric_terrain"),
+        ("Grass grew to cover the battlefield!", "grassy_terrain"),
+        ("Mist swirled around the battlefield!", "misty_terrain"),
+        ("The battlefield got weird!", "psychic_terrain"),
+    ]
+    for text, terrain in starts:
+        events = parse_battle_text(text)
+        assert len(events) == 1, text
+        assert events[0].type == "terrain_start", text
+        assert events[0].terrain == terrain, text
+
+    ends = [
+        ("The electricity disappeared from the battlefield.", "electric_terrain"),
+        ("The grass disappeared from the battlefield.", "grassy_terrain"),
+        ("The mist disappeared from the battlefield.", "misty_terrain"),
+        ("The weirdness disappeared from the battlefield!", "psychic_terrain"),
+    ]
+    for text, terrain in ends:
+        events = parse_battle_text(text)
+        assert len(events) == 1, text
+        assert events[0].type == "terrain_end", text
+        assert events[0].terrain == terrain, text
+
+
 def test_parse_side_condition_tailwind() -> None:
     events = parse_battle_text("A tailwind started blowing on your side!")
     assert len(events) == 1
