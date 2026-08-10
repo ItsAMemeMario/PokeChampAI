@@ -19,6 +19,13 @@ export type StatStages = {
   accuracy: number;
 };
 
+export type MoveRestrictionState = {
+  restriction: "no_pp" | "forced_move" | "cooldown" | "unusable";
+  move: string | null;
+  source_item: string | null;
+  clears_on_switch: boolean;
+};
+
 export type ActivePokemon = {
   species: string;
   hp_percentage: number;
@@ -27,6 +34,9 @@ export type ActivePokemon = {
   volatile_statuses: string[];
   is_protected_this_turn: boolean;
   is_protected_last_turn: boolean;
+  perish_turns: number;
+  item_state: "unknown" | "held" | "consumed" | "lost";
+  move_restrictions: MoveRestrictionState[];
   revealed_ability: string | null;
   revealed_item: string | null;
   revealed_moves: string[];
@@ -36,6 +46,7 @@ export type BenchedPokemon = {
   species: string;
   hp_percentage: number;
   status_condition: "none" | "brn" | "par" | "slp" | "psn" | "tox" | "frz";
+  item_state: "unknown" | "held" | "consumed" | "lost";
   revealed_ability: string | null;
   revealed_item: string | null;
   revealed_moves: string[];
@@ -45,25 +56,33 @@ export type Hazards = {
   spikes: 0 | 1 | 2 | 3;
   toxic_spikes: 0 | 1 | 2;
   stealth_rocks: 0 | 1;
+  sticky_web: 0 | 1;
 };
 
 export type SideState = {
   slot_1: ActivePokemon | null;
   slot_2: ActivePokemon | null;
   benched: BenchedPokemon[];
+  mega_used: boolean;
   tailwind_turns: number;
   reflect_turns: number;
   light_screen_turns: number;
   aurora_veil_turns: number;
+  safeguard_turns: number;
   hazards: Hazards;
 };
 
 export type FieldState = {
   weather: "none" | "sun" | "rain" | "sand" | "snow";
   weather_turns: number;
+  weather_suppressed: boolean;
   terrain: "none" | "electric" | "grassy" | "misty" | "psychic";
   terrain_turns: number;
   trick_room_turns: number;
+  gravity_turns: number;
+  magic_room_turns: number;
+  wonder_room_turns: number;
+  fairy_lock_turns: number;
 };
 
 export type GameState = {

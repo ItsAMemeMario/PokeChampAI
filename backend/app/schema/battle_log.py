@@ -7,6 +7,82 @@ from pydantic import BaseModel, Field, TypeAdapter
 
 from app.schema.common import Side, Pokemon
 
+StatName = Literal["atk", "def", "spa", "spd", "spe", "accuracy", "evasion"]
+
+MoveFailedReason = Literal[
+    "failed",
+    "nothing_happened",
+    "flinch",
+    "paralysis",
+    "freeze",
+    "sleep",
+    "recharge",
+    "no_pp",
+    "gravity",
+    "insufficient_hp",
+    "unusable",
+    "cooldown",
+    "cant",
+]
+
+FieldEffect = Literal[
+    "gravity",
+    "magic_room",
+    "wonder_room",
+    "weather_suppression",
+]
+
+StatStageOperation = Literal[
+    "clear_all",
+    "clear_one",
+    "invert",
+    "copy",
+    "swap_all",
+    "swap_offensive",
+    "swap_defensive",
+]
+
+HeldItemChange = Literal[
+    "revealed",
+    "activated",
+    "consumed",
+    "lost",
+    "obtained",
+    "stolen",
+]
+
+MoveAvailabilityRestriction = Literal[
+    "no_pp",
+    "forced_move",
+    "cooldown",
+    "unusable",
+]
+
+MoveOutcome = Literal[
+    "extremely_effective",
+    "super_effective",
+    "resisted",
+    "mostly_ineffective",
+    "critical",
+    "immune",
+    "miss",
+    "ohko",
+    "hit_count",
+]
+
+SideCondition = Literal[
+    "tailwind",
+    "reflect",
+    "light_screen",
+    "aurora_veil",
+    "spikes",
+    "toxic_spikes",
+    "stealth_rocks",
+    "safeguard",
+    "sticky_web",
+]
+
+
 class BattleLogEventBase(BaseModel):
     raw_text: str
     timestamp: datetime = Field(default_factory=datetime.now)
@@ -31,6 +107,7 @@ class MoveFailedEvent(BattleLogEventBase):
     type: Literal["move_failed"] = "move_failed"
     actor: Pokemon | None = None
     move: str = ""
+    reason: MoveFailedReason = "failed"
 
 
 class AbilityTriggeredEvent(BattleLogEventBase):
@@ -75,7 +152,7 @@ class HPChangeEvent(BattleLogEventBase):
 class StatChangeEvent(BattleLogEventBase):
     type: Literal["stat_change"] = "stat_change"
     pokemon: Pokemon
-    stat: Literal["atk", "def", "spa", "spd", "spe", "accuracy", "evasion"]
+    stat: StatName
     stages_delta: int = Field(ge=-6, le=6)
 
 
@@ -143,15 +220,62 @@ FieldEvent = Union[
 class SideConditionEvent(BattleLogEventBase):
     type: Literal["side_condition"] = "side_condition"
     side: Side
-    condition: Literal[
-        "tailwind",
-        "reflect",
-        "light_screen",
-        "aurora_veil",
-        "spikes",
-        "toxic_spikes",
-        "stealth_rocks",
-    ]
+    condition: SideCondition
+    action: Literal["start", "end"] = "start"
+
+
+class FieldEffectChangedEvent(BattleLogEventBase):
+    type: Literal["field_effect_changed"] = "field_effect_changed"
+    effect: FieldEffect
+    action: Literal["start", "end"]
+    source: Pokemon | None = None
+
+
+class PerishSongStartedEvent(BattleLogEventBase):
+    type: Literal["perish_song_started"] = "perish_song_started"
+    turns_remaining: Literal[3] = 3
+    source: Pokemon | None = None
+    affected: List[Pokemon] = Field(default_factory=list)
+
+
+class SwitchLockStartedEvent(BattleLogEventBase):
+    type: Literal["switch_lock_started"] = "switch_lock_started"
+    scope: Literal["all_active"] = "all_active"
+    activates_next_turn: Literal[True] = True
+    source: Pokemon | None = None
+
+
+class StatStageOperationEvent(BattleLogEventBase):
+    type: Literal["stat_stage_operation"] = "stat_stage_operation"
+    operation: StatStageOperation
+    pokemon: Pokemon | None = None
+    target: Pokemon | None = None
+    stats: List[StatName] = Field(default_factory=list)
+
+
+class HeldItemChangedEvent(BattleLogEventBase):
+    type: Literal["held_item_changed"] = "held_item_changed"
+    change: HeldItemChange
+    pokemon: Pokemon | None = None
+    item: str | None = None
+    source: Pokemon | None = None
+    associated_move: str | None = None
+
+
+class MoveAvailabilityChangedEvent(BattleLogEventBase):
+    type: Literal["move_availability_changed"] = "move_availability_changed"
+    restriction: MoveAvailabilityRestriction
+    pokemon: Pokemon | None = None
+    move: str | None = None
+    source_item: str | None = None
+    clears_on_switch: bool | None = None
+
+
+class MoveOutcomeEvent(BattleLogEventBase):
+    type: Literal["move_outcome"] = "move_outcome"
+    outcome: MoveOutcome
+    target: Pokemon | None = None
+    count: int | None = Field(default=None, ge=1)
 
 
 BattleLogEvent = Annotated[
@@ -174,6 +298,13 @@ BattleLogEvent = Annotated[
         FaintEvent,
         FieldEvent,
         SideConditionEvent,
+        FieldEffectChangedEvent,
+        PerishSongStartedEvent,
+        SwitchLockStartedEvent,
+        StatStageOperationEvent,
+        HeldItemChangedEvent,
+        MoveAvailabilityChangedEvent,
+        MoveOutcomeEvent,
     ],
     Field(discriminator="type"),
 ]
