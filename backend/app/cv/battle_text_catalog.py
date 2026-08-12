@@ -2,8 +2,8 @@
 
 Canonical strings come from the Champout ``btl_std.json`` dump. Showdown
 ``default.ts`` strings are explicit fallbacks only. Tokenized templates are
-declared here for the dispatcher; variable-token matching lands in the matcher
-layer (``event_parser`` / later todo work).
+declared here and matched by the token-first positional matcher in
+``battle_text_matchers``.
 """
 
 from __future__ import annotations
@@ -40,14 +40,15 @@ class BattleTextTemplate:
     champions: tuple[str, ...] = ()
     showdown: tuple[str, ...] = ()
     tokens: tuple[TokenName, ...] = ()
-    # Large fixed substring for tokenized templates (RapidFuzz anchor).
+    # Deprecated catalog metadata retained for compatibility. The token-first
+    # matcher never uses it as an anchor.
     fixed_anchor: str | None = None
     priority: int = 100
     matcher: MatcherKind = "fixed"
     multi_event: bool = False
     # Static fields merged into the emitted event (side, outcome, …).
     static: Mapping[str, Any] = field(default_factory=dict)
-    # Existing regex/handler name when matcher == "legacy".
+    # Legacy source-group hint; ``side_banner`` remains a separate UI parser.
     legacy_handler: str | None = None
 
 

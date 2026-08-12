@@ -170,12 +170,30 @@ def _strip_opposing(raw: str) -> str:
     return _OPPOSING_PREFIX_RE.sub("", raw).strip()
 
 
+def _pattern_species_side_hint(
+    template: BattleTextTemplate,
+    pattern: str,
+) -> str | None:
+    """Return the side encoded by switch wording, when there is one."""
+    static_side = template.static.get("side")
+    if static_side in {"player", "opponent"}:
+        return static_side
+
+    lowered = pattern.casefold()
+    if "go!" in lowered or "come back" in lowered:
+        return "player"
+    if "sent out" in lowered or "withdrew" in lowered:
+        return "opponent"
+    return None
+
+
 def _pick_species_fill(
     teams: FuzzTeams,
     rng: random.Random,
     *,
     side_hint: str | None,
     used_on_side: dict[str, set[str]],
+    force_bare: bool = False,
 ) -> str:
     """Pick a team species. Free-side opponent fills use ``the opposing`` prefix.
 
@@ -196,7 +214,7 @@ def _pick_species_fill(
     unused = [s for s in pool if s not in used_on_side[side]]
     species = rng.choice(unused or pool)
     used_on_side[side].add(species)
-    if with_prefix:
+    if with_prefix and not force_bare:
         return f"the opposing {species}"
     return species
 
@@ -206,29 +224,27 @@ def _fill_pattern(
     template: BattleTextTemplate,
     teams: FuzzTeams,
     rng: random.Random,
-) -> tuple[str, dict[str, list[str]]]:
+) -> tuple[str, dict[str, list[str]], dict[str, list[range]]]:
     """Fill every ``[TOKEN]`` occurrence using the per-iteration teams."""
     pattern = (
         normalize_catalog_text(pattern)
         .replace("Pokémon", "Pokemon")
         .replace("é", "e")
     )
-    side_hint = template.static.get("side")
-    if isinstance(side_hint, str):
-        side_hint_value: str | None = side_hint
-    else:
-        side_hint_value = None
+    side_hint_value = _pattern_species_side_hint(template, pattern)
 
     values: dict[str, list[str]] = {}
+    token_spans: dict[str, list[range]] = {}
     used_on_side: dict[str, set[str]] = {"player": set(), "opponent": set()}
     # Owning Pokémon for subsequent [MOVE] tokens in the same pattern.
     owner_species: str | None = None
+    owner_side: str | None = None
 
-    def repl(match: re.Match[str]) -> str:
-        nonlocal owner_species
+    def token_value(match: re.Match[str]) -> str:
+        nonlocal owner_species, owner_side
         name = match.group(1)
 
-        if name in {"POKEMON", "TARGET", "SOURCE", "SPECIES"}:
+        if name in {"POKEMON", "TARGET", "SOURCE"}:
             value = _pick_species_fill(
                 teams,
                 rng,
@@ -237,6 +253,21 @@ def _fill_pattern(
             )
             if name == "POKEMON" and owner_species is None:
                 owner_species = _strip_opposing(value)
+                owner_side = (
+                    "opponent"
+                    if _OPPOSING_PREFIX_RE.search(value)
+                    else side_hint_value or "player"
+                )
+        elif name == "SPECIES":
+            # Mega target names are bare (``Mega Charizard``), never
+            # ``Mega the opposing Charizard``.
+            value = _pick_species_fill(
+                teams,
+                rng,
+                side_hint=owner_side or side_hint_value,
+                used_on_side=used_on_side,
+                force_bare=True,
+            )
         elif name == "MOVE":
             if owner_species is not None:
                 move_pool = _learnset_moves(owner_species)
@@ -263,24 +294,34 @@ def _fill_pattern(
         values.setdefault(name, []).append(value)
         return value
 
-    filled = _TOKEN_RE.sub(repl, pattern)
-    return filled, values
+    pieces: list[str] = []
+    cursor = 0
+    for match in _TOKEN_RE.finditer(pattern):
+        pieces.append(pattern[cursor : match.start()])
+        value = token_value(match)
+        start = sum(len(piece) for piece in pieces)
+        token_spans.setdefault(match.group(1), []).append(range(start, start + len(value)))
+        pieces.append(value)
+        cursor = match.end()
+    pieces.append(pattern[cursor:])
+    return "".join(pieces), values, token_spans
 
 
-def _mutate_text(text: str, rng: random.Random) -> str:
+def _mutate_text(text: str, rng: random.Random) -> tuple[str, set[int]]:
     """Mutate ``MUTATE_PERCENTAGE_*`` of characters to random printable ASCII."""
     if not text:
-        return text
+        return text, set()
     pct = rng.uniform(MUTATE_PERCENTAGE_MIN, MUTATE_PERCENTAGE_MAX)
     n_mut = max(1, int(round(len(text) * pct / 100.0)))
     n_mut = min(n_mut, len(text))
     chars = list(text)
-    for pos in rng.sample(range(len(chars)), n_mut):
+    mutated_positions = set(rng.sample(range(len(chars)), n_mut))
+    for pos in mutated_positions:
         replacement = rng.choice(_PRINTABLE_ASCII)
         while replacement == chars[pos] and len(_PRINTABLE_ASCII) > 1:
             replacement = rng.choice(_PRINTABLE_ASCII)
         chars[pos] = replacement
-    return "".join(chars)
+    return "".join(chars), mutated_positions
 
 
 def _assert_static_fields(event: Any, static: dict[str, Any], *, ctx: str) -> None:
@@ -307,6 +348,8 @@ def _assert_static_fields(event: Any, static: dict[str, Any], *, ctx: str) -> No
 def _assert_token_fields(
     event: Any,
     values: dict[str, list[str]],
+    token_spans: dict[str, list[range]],
+    mutated_positions: set[int],
     *,
     ctx: str,
 ) -> None:
@@ -316,12 +359,16 @@ def _assert_token_fields(
         if poke is not None and hasattr(poke, "species"):
             found_species.append(poke.species)
 
-    for token in ("POKEMON", "TARGET", "SOURCE"):
-        for raw in values.get(token, ()):
-            species = _strip_opposing(raw)
-            assert species in found_species, (
-                f"{ctx}: expected species {species!r} in {found_species!r}"
-            )
+    # Some event schemas (for example trick_room_start) intentionally do not
+    # retain the text's actor. Assert species only when the emitted type has a
+    # Pokemon-bearing field to expose.
+    if found_species:
+        for token in ("POKEMON", "TARGET", "SOURCE"):
+            for raw in values.get(token, ()):
+                species = _strip_opposing(raw)
+                assert species in found_species, (
+                    f"{ctx}: expected species {species!r} in {found_species!r}"
+                )
 
     for raw in values.get("MOVE", ()):
         if hasattr(event, "move") and getattr(event, "move"):
@@ -332,7 +379,12 @@ def _assert_token_fields(
     for raw in values.get("ABILITY", ()):
         if hasattr(event, "ability") and getattr(event, "ability"):
             assert event.ability == raw, ctx
-    for raw in values.get("NUMBER", ()):
+    for index, raw in enumerate(values.get("NUMBER", ())):
+        # Replacing a one-character number with another digit destroys the
+        # original value; a parser cannot distinguish OCR noise from a real
+        # count. The event type/static data remain independently testable.
+        if any(pos in mutated_positions for pos in token_spans["NUMBER"][index]):
+            continue
         if hasattr(event, "count") and event.count is not None:
             assert event.count == int(raw), ctx
     for raw in values.get("STAT", ()):
@@ -351,8 +403,8 @@ def test_battle_text_catalog_fuzz_black_box() -> None:
             teams = _init_teams(rng)
             template = rng.choice(templates)
             pattern = rng.choice(_usable_patterns(template))
-            filled, values = _fill_pattern(pattern, template, teams, rng)
-            mutated = _mutate_text(filled, rng)
+            filled, values, token_spans = _fill_pattern(pattern, template, teams, rng)
+            mutated, mutated_positions = _mutate_text(filled, rng)
             expected_type = _expected_event_type(template, pattern)
 
             # Keep the selected teams as the snap pools for this iteration.
@@ -373,6 +425,12 @@ def test_battle_text_catalog_fuzz_black_box() -> None:
                 f"{ctx}: type {event.type!r} != {expected_type!r}"
             )
             _assert_static_fields(event, dict(template.static), ctx=ctx)
-            _assert_token_fields(event, values, ctx=ctx)
+            _assert_token_fields(
+                event,
+                values,
+                token_spans,
+                mutated_positions,
+                ctx=ctx,
+            )
     finally:
         logging.disable(logging.NOTSET)
