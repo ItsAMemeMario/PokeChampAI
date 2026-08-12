@@ -24,6 +24,10 @@ def test_normalize_catalog_text_strips_layout_markers() -> None:
     assert normalize_catalog_text("It’s super effective!") == (
         "It's super effective!"
     )
+    assert normalize_catalog_text("Wait…") == "Wait..."
+    assert normalize_catalog_text("**Reflect** made your side stronger!") == (
+        "Reflect made your side stronger!"
+    )
 
 
 def test_parse_move_outcome_champions_fixed() -> None:

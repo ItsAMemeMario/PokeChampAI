@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from app.cv.event_parser import (
     is_known_item,
     normalize_ocr_text,
@@ -21,6 +23,9 @@ def test_normalize_ocr_text_fixes_apostrophe_noise() -> None:
     assert normalize_ocr_text("Whimsicott' s Focus Sash") == "Whimsicott's Focus Sash"
     assert normalize_ocr_text("Whimsicott $ Focus Sash") == "Whimsicott's Focus Sash"
     assert normalize_ocr_text("Gol Charizardl") == "Go! Charizard!"
+    assert normalize_ocr_text("Bluesent out Garchomp!") == "Blue sent out Garchomp!"
+    assert normalize_ocr_text("Go! Foo ard Bar!") == "Go! Foo and Bar!"
+    assert normalize_ocr_text("The 0pposing Garchomp") == "The opposing Garchomp"
 
 
 def test_parse_side_banner_ability() -> None:
@@ -157,6 +162,14 @@ def test_parse_battle_text_move_used() -> None:
     assert events[0].type == "move_used"
     assert events[0].actor.species == "Sinistcha"
     assert events[0].move == "Matcha Gotcha"
+
+
+def test_parse_battle_text_faint() -> None:
+    events = parse_battle_text("The opposing Grimmsnarl fainted!")
+    assert len(events) == 1
+    assert events[0].type == "faint"
+    assert events[0].pokemon.species == "Grimmsnarl"
+    assert events[0].pokemon.side == "opponent"
 
 
 def test_parse_battle_text_move_failed() -> None:
@@ -436,3 +449,132 @@ def test_parse_side_condition_hazards() -> None:
     )
     assert events[0].condition == "stealth_rocks"
     assert events[0].side == "opponent"
+
+
+def _field_path(event: object, path: str) -> object:
+    value = event
+    for part in path.split("."):
+        value = getattr(value, part)
+    return value
+
+
+@pytest.mark.parametrize(
+    ("text", "player_species", "opponent_species", "expected"),
+    [
+        (
+            "The opposing Garchomp can't use Earthquake because of gravity!",
+            ("Incineroar",),
+            ("Garchomp",),
+            {
+                "type": "move_failed",
+                "reason": "gravity",
+                "actor.species": "Garchomp",
+                "actor.side": "opponent",
+                "move": "Earthquake",
+            },
+        ),
+        (
+            "The opposing Garchomp copied Incineroar's stat changes!",
+            ("Incineroar",),
+            ("Garchomp",),
+            {
+                "type": "stat_stage_operation",
+                "operation": "copy",
+                "pokemon.species": "Garchomp",
+                "pokemon.side": "opponent",
+                "target.species": "Incineroar",
+                "target.side": "player",
+            },
+        ),
+        (
+            "Incineroar stole the opposing Garchomp's Sitrus Berry!",
+            ("Incineroar",),
+            ("Garchomp",),
+            {
+                "type": "held_item_changed",
+                "change": "stolen",
+                "pokemon.species": "Incineroar",
+                "source.species": "Garchomp",
+                "source.side": "opponent",
+                "item": "Sitrus Berry",
+            },
+        ),
+        (
+            "Coba Berry only allows the use of Wish!",
+            ("Garchomp",),
+            ("Incineroar",),
+            {
+                "type": "move_availability_changed",
+                "restriction": "forced_move",
+                "source_item": "Coba Berry",
+                "move": "Wish",
+                "clears_on_switch": True,
+            },
+        ),
+        (
+            "It doesn't affect the opposing Garchomp...",
+            ("Incineroar",),
+            ("Garchomp",),
+            {
+                "type": "move_outcome",
+                "outcome": "immune",
+                "target.species": "Garchomp",
+                "target.side": "opponent",
+            },
+        ),
+        (
+            "The Pokémon was hit 3 time(s)!",
+            ("Incineroar",),
+            ("Garchomp",),
+            {
+                "type": "move_outcome",
+                "outcome": "hit_count",
+                "count": 3,
+            },
+        ),
+        (
+            "Go! Garchomp▽\nand Incineroar!",
+            ("Garchomp", "Incineroar"),
+            ("Whimsicott",),
+            {
+                "type": "lead_in",
+                "side": "player",
+                "slot_1.species": "Garchomp",
+                "slot_2.species": "Incineroar",
+            },
+        ),
+    ],
+)
+def test_parse_catalog_texts_into_structured_events(
+    text: str,
+    player_species: tuple[str, ...],
+    opponent_species: tuple[str, ...],
+    expected: dict[str, object],
+) -> None:
+    """Source-backed templates retain their typed fields through dispatch."""
+    events = parse_battle_text(
+        text,
+        player_species=player_species,
+        opponent_species=opponent_species,
+    )
+
+    assert len(events) == 1, text
+    for path, value in expected.items():
+        assert _field_path(events[0], path) == value, f"{text}: {path}"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "Choose a move!",
+        "The opposing Garchomp used!",
+        "It doesn't affect...",
+    ],
+)
+def test_parse_battle_text_rejects_unknown_and_incomplete_messages(text: str) -> None:
+    assert parse_battle_text(
+        text,
+        player_species=("Incineroar",),
+        opponent_species=("Garchomp",),
+    ) == []

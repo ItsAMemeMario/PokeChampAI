@@ -393,3 +393,73 @@ def test_battle_logs_indexed_by_turn_number() -> None:
     assert store.battle_logs[2][0].turn_number == 2
     assert store.battle_logs[1][1].move == "Earthquake"  # type: ignore[union-attr]
     assert store.battle_logs[2][1].move == "Matcha Gotcha"  # type: ignore[union-attr]
+
+
+def test_ocr_reread_replaces_prior_event_and_replays_state() -> None:
+    """A cleaner reread must replace, not compound with, the noisy event."""
+    store = SessionStore()
+    store.game_state = _game_state(player_slot_1=_active("Garchomp"))
+    _start_turn(store)
+    store.append_battle_log(
+        _move("Garchomp", "Earthquak")
+    )
+    store.append_battle_log(
+        _move("Garchomp", "Earthquake")
+    )
+
+    events = _turn_events(store)
+    assert len(events) == 2
+    move = events[1]
+    assert move.type == "move_used"
+    assert move.raw_text == "Garchomp used Earthquake!"
+    assert move.move == "Earthquake"
+    assert store.game_state is not None
+    assert store.game_state.player.slot_1 is not None
+    assert store.game_state.player.slot_1.revealed_moves == ["Earthquake"]
+
+
+def test_move_failed_patch_replays_protect_state() -> None:
+    """Completing a failure must also reapply its reducer consequence."""
+    store = SessionStore()
+    store.game_state = _game_state(player_slot_1=_active("Staraptor"))
+    _start_turn(store)
+    store.append_battle_log(_move("Staraptor", "Protect"))
+
+    patches = store.append_battle_log(
+        MoveFailedEvent(raw_text="But it failed!", timestamp=datetime(2026, 1, 1))
+    )
+
+    assert patches == [(1, 2)]
+    failed = _turn_events(store)[2]
+    assert failed.type == "move_failed"
+    assert failed.actor is not None
+    assert failed.actor.species == "Staraptor"
+    assert failed.move == "Protect"
+    assert store.game_state is not None
+    assert store.game_state.player.slot_1 is not None
+    assert store.game_state.player.slot_1.is_protected_this_turn is False
+
+
+def test_session_dedupes_nonadjacent_semantic_event() -> None:
+    """A duplicate may not reapply state merely because another event intervened."""
+    store = SessionStore()
+    store.game_state = _game_state(player_slot_1=_active("Garchomp"))
+    _start_turn(store)
+    first = StatChangeEvent(
+        raw_text="Garchomp's Defense fell!",
+        pokemon=Pokemon(species="Garchomp", side="player", slot=1),
+        stat="def",
+        stages_delta=-1,
+    )
+    store.append_battle_log(first)
+    store.append_battle_log(_move("Garchomp", "Earthquake"))
+
+    result = store.append_battle_log(
+        first.model_copy(update={"raw_text": "Garchomp's Defense fell."})
+    )
+
+    assert result == []
+    assert len(_turn_events(store)) == 3
+    assert store.game_state is not None
+    assert store.game_state.player.slot_1 is not None
+    assert store.game_state.player.slot_1.stat_stages.def_ == -1
