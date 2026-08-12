@@ -54,6 +54,19 @@ def test_parse_side_banner_item_from_known_item_name() -> None:
     assert event.item == "Sitrus Berry"
 
 
+def test_parse_side_banner_reconstructs_canonical_raw_text() -> None:
+    event = parse_side_banner(
+        "Snoasler'$ Focus Sash",
+        "player",
+        slot=1,
+        player_species=("Sneasler",),
+    )
+    assert event is not None
+    assert event.type == "item_used"
+    assert event.item == "Focus Sash"
+    assert event.raw_text == "Sneasler's Focus Sash"
+
+
 def test_parse_side_banner_opponent_ability() -> None:
     event = parse_side_banner("Aerodactyl's Unnerve", "opponent", slot=1)
     assert event is not None
@@ -162,6 +175,63 @@ def test_parse_battle_text_move_used() -> None:
     assert events[0].type == "move_used"
     assert events[0].actor.species == "Sinistcha"
     assert events[0].move == "Matcha Gotcha"
+
+
+def test_parse_battle_text_reconstructs_canonical_raw_text() -> None:
+    events = parse_battle_text(
+        "Snoasler used Threat Chop'",
+        player_species=("Sneasler",),
+    )
+    assert len(events) == 1
+    assert events[0].type == "move_used"
+    assert events[0].actor.species == "Sneasler"
+    assert events[0].move == "Throat Chop"
+    assert events[0].raw_text == "Sneasler used Throat Chop!"
+
+    opponent = parse_battle_text(
+        "The opposing Garchmp used Earthquak!",
+        opponent_species=("Garchomp",),
+    )
+    assert len(opponent) == 1
+    assert opponent[0].raw_text == "The opposing Garchomp used Earthquake!"
+
+    immune = parse_battle_text(
+        "It doesn't affect the opposing Garchmp...",
+        opponent_species=("Garchomp",),
+    )
+    assert len(immune) == 1
+    assert immune[0].raw_text == "It doesn't affect the opposing Garchomp..."
+
+    stolen = parse_battle_text(
+        "Incineroar stole the opposing Garchmp's Coba Berry!",
+        player_species=("Incineroar",),
+        opponent_species=("Garchomp",),
+    )
+    assert len(stolen) == 1
+    assert stolen[0].raw_text == (
+        "Incineroar stole the opposing Garchomp's Coba Berry!"
+    )
+
+    leads = parse_battle_text(
+        "Gol Snoasler ard Grimmsnarl!",
+        player_species=("Sneasler", "Grimmsnarl"),
+    )
+    assert len(leads) == 1
+    assert leads[0].raw_text == "Go! Sneasler and Grimmsnarl!"
+
+
+def test_parse_battle_text_canonicalizes_fixed_and_stat_fallback_text() -> None:
+    fixed = parse_battle_text("It’s super effective!")
+    assert len(fixed) == 1
+    assert fixed[0].raw_text == "It's super effective!"
+
+    stats = parse_battle_text(
+        "The opposing Palafin and the opposing Tyrantrum Attack telll"
+    )
+    assert [event.raw_text for event in stats] == [
+        "The opposing Palafin's Attack fell!",
+        "The opposing Tyrantrum's Attack fell!",
+    ]
 
 
 def test_parse_battle_text_faint() -> None:

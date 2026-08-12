@@ -84,6 +84,16 @@ _STAT_ALIASES: dict[str, str] = {
     "evasion": "evasion",
 }
 
+_STAT_DISPLAY_NAMES: dict[str, str] = {
+    "atk": "Attack",
+    "def": "Defense",
+    "spa": "Sp. Atk",
+    "spd": "Sp. Def",
+    "spe": "Speed",
+    "accuracy": "Accuracy",
+    "evasion": "Evasion",
+}
+
 _SIDE_BANNER_RE = re.compile(
     r"^(?P<species>.+?)['\u2019$]s?\s+(?P<name>.+?)(?:\s*[=!.]+)?$",
     re.IGNORECASE,
@@ -254,25 +264,26 @@ def _fixed_positional_score(text: str, candidate: str, *, base_score: float) -> 
 
 
 def _emit_fixed_template(
-    raw_text: str,
+    _raw_text: str,
     match: _FixedMatch,
 ) -> list[BattleLogEvent]:
     """Build BattleLogEvent(s) from a fixed catalog hit."""
     template = match.template
     static: dict[str, Any] = dict(template.static)
     kind = template.event_kind
+    canonical_text = match.matched_text
 
     if kind == "move_outcome":
         return [
             MoveOutcomeEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 outcome=static["outcome"],
             )
         ]
     if kind == "field_effect_changed":
         return [
             FieldEffectChangedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 effect=static["effect"],
                 action=static["action"],
             )
@@ -280,42 +291,42 @@ def _emit_fixed_template(
     if kind == "perish_song_started":
         return [
             PerishSongStartedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 turns_remaining=static.get("turns_remaining", 3),
             )
         ]
     if kind == "switch_lock_started":
         return [
             SwitchLockStartedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 scope=static.get("scope", "all_active"),
             )
         ]
     if kind == "stat_stage_operation":
         return [
             StatStageOperationEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 operation=static["operation"],
             )
         ]
     if kind == "held_item_changed":
         return [
             HeldItemChangedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 change=static["change"],
             )
         ]
     if kind == "move_failed":
         return [
             MoveFailedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 reason=static.get("reason", "failed"),
             )
         ]
     if kind == "move_availability_changed":
         return [
             MoveAvailabilityChangedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 restriction=static["restriction"],
                 clears_on_switch=static.get("clears_on_switch"),
             )
@@ -323,24 +334,24 @@ def _emit_fixed_template(
     if kind == "side_condition":
         return [
             SideConditionEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 side=static["side"],
                 condition=static["condition"],
                 action=static.get("action", "start"),
             )
         ]
     if kind == "weather_start":
-        return [WeatherStartEvent(raw_text=raw_text, weather=static["weather"])]
+        return [WeatherStartEvent(raw_text=canonical_text, weather=static["weather"])]
     if kind == "weather_end":
-        return [WeatherEndEvent(raw_text=raw_text, weather=static["weather"])]
+        return [WeatherEndEvent(raw_text=canonical_text, weather=static["weather"])]
     if kind == "terrain_start":
-        return [TerrainStartEvent(raw_text=raw_text, terrain=static["terrain"])]
+        return [TerrainStartEvent(raw_text=canonical_text, terrain=static["terrain"])]
     if kind == "terrain_end":
-        return [TerrainEndEvent(raw_text=raw_text, terrain=static["terrain"])]
+        return [TerrainEndEvent(raw_text=canonical_text, terrain=static["terrain"])]
     if kind == "trick_room_end":
-        return [TrickRoomEndEvent(raw_text=raw_text)]
+        return [TrickRoomEndEvent(raw_text=canonical_text)]
     if kind == "trick_room_start":
-        return [TrickRoomStartEvent(raw_text=raw_text)]
+        return [TrickRoomStartEvent(raw_text=canonical_text)]
 
     logger.warning("No emitter for fixed catalog kind %s (%s)", kind, template.id)
     return []
@@ -389,6 +400,25 @@ def _pokemon(
     return Pokemon(species=snapped, side=side, slot=slot)
 
 
+def _render_pokemon(pokemon: Pokemon) -> str:
+    if pokemon.side == "opponent":
+        return f"The opposing {pokemon.species}"
+    return pokemon.species
+
+
+def _render_stat_change(pokemon: Pokemon, stat: str, stages_delta: int) -> str:
+    """Render one canonical stat-change sentence for the regex fallback."""
+    direction = "rose" if stages_delta > 0 else "fell"
+    magnitude = abs(stages_delta)
+    modifier = {
+        1: "",
+        2: " sharply" if stages_delta > 0 else " harshly",
+        3: " drastically" if stages_delta > 0 else " severely",
+    }.get(magnitude, "")
+    display_stat = _STAT_DISPLAY_NAMES.get(stat, stat)
+    return f"{_render_pokemon(pokemon)}'s {display_stat} {direction}{modifier}!"
+
+
 def _snap_item(name: str) -> str:
     return snap_to_legal(name, REGULATION_MB_ITEMS) or name.strip()
 
@@ -435,16 +465,18 @@ def parse_side_banner(
     )
 
     if is_known_item(name):
+        item = _snap_item(name)
         return ItemUsedEvent(
-            raw_text=text,
+            raw_text=f"{pokemon.species}'s {item}",
             pokemon=pokemon,
-            item=_snap_item(name),
+            item=item,
         )
 
+    ability = _snap_ability(name)
     return AbilityTriggeredEvent(
-        raw_text=text,
+        raw_text=f"{pokemon.species}'s {ability}",
         actor=pokemon,
-        ability=_snap_ability(name),
+        ability=ability,
         effect_text=effect_text,
     )
 
@@ -541,7 +573,7 @@ def _parse_stat_changes(text: str) -> list[StatChangeEvent]:
         for stat_key, delta in clause_stats:
             events.append(
                 StatChangeEvent(
-                    raw_text=text,
+                    raw_text=_render_stat_change(pokemon, stat_key, delta),
                     pokemon=pokemon,
                     stat=stat_key,  # type: ignore[arg-type]
                     stages_delta=delta,

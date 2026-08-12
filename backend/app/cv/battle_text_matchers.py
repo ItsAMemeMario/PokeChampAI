@@ -81,6 +81,16 @@ _STAT_ALIASES: dict[str, str] = {
     "evasion": "evasion",
 }
 
+_STAT_DISPLAY_NAMES: dict[str, str] = {
+    "atk": "Attack",
+    "def": "Defense",
+    "spa": "Sp. Atk",
+    "spd": "Sp. Def",
+    "spe": "Speed",
+    "accuracy": "Accuracy",
+    "evasion": "Evasion",
+}
+
 _TYPE_NAMES = (
     "Normal",
     "Fire",
@@ -130,6 +140,79 @@ class TokenizedMatch:
         for span in self.spans:
             values.setdefault(span.name, []).append(span.value)
         return {name: tuple(values_) for name, values_ in values.items()}
+
+
+def render_tokenized_template(match: TokenizedMatch) -> str:
+    """Render the matched catalog pattern with snapped canonical token values.
+
+    ``raw_text`` is an OCR artifact.  Once a template match is accepted, the
+    event log should instead retain the catalog sentence with its resolved
+    Pokémon, move, item, and other dynamic values.  This makes downstream
+    completion, logs, and Gemini context deterministic without inventing
+    values for unresolved tokens.
+    """
+    pattern = normalize_catalog_text(match.pattern)
+    spans = iter(match.spans)
+
+    def replace(token_match: re.Match[str]) -> str:
+        token_name = token_match.group(1)
+        span = next(spans, None)
+        if span is None or span.name != token_name:
+            # A malformed match must not silently substitute an unrelated
+            # value. This is defensive only: `_match_pattern` builds spans in
+            # the same order as token occurrences.
+            return token_match.group(0)
+        return _render_token_value(
+            pattern,
+            token_name,
+            span,
+            token_offset=token_match.start(),
+        )
+
+    return normalize_catalog_text(_TOKEN_RE.sub(replace, pattern))
+
+
+def _render_token_value(
+    pattern: str,
+    token_name: str,
+    span: TokenSpan,
+    *,
+    token_offset: int,
+) -> str:
+    value = span.value
+    if value is None:
+        # The parser may emit an event with an unrecoverable number. Preserve
+        # that uncertainty explicitly rather than retaining malformed OCR or
+        # fabricating a value.
+        return "?"
+
+    if token_name == "STAT":
+        return _STAT_DISPLAY_NAMES.get(value, value)
+
+    if token_name in {"POKEMON", "TARGET", "SOURCE"}:
+        if span.side == "opponent" and _needs_opposing_prefix(pattern, token_name):
+            article = "The" if _token_starts_sentence(pattern, token_offset) else "the"
+            return f"{article} opposing {value}"
+    return value
+
+
+def _token_starts_sentence(pattern: str, token_offset: int) -> bool:
+    before = pattern[:token_offset].rstrip()
+    return not before or before[-1] in ".!?"
+
+
+def _needs_opposing_prefix(pattern: str, token_name: str) -> bool:
+    """Whether a template itself does not already identify the opponent side."""
+    lowered = pattern.casefold()
+    if token_name != "POKEMON":
+        return True
+    # The trainer grammar already establishes that the named Pokémon is on
+    # the opponent's side. Adding a prefix would produce "sent out The
+    # opposing ..." rather than a canonical battle message.
+    if "sent out [pokemon]" in lowered or "withdrew [pokemon]" in lowered:
+        return False
+    # "Go!" always describes the player side.
+    return "go! [pokemon]" not in lowered
 
 
 def match_tokenized_catalog_template(
@@ -185,6 +268,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
     static = dict(template.static)
     tokens = _spans_by_name(match.spans)
     kind = template.event_kind
+    canonical_text = render_tokenized_template(match)
 
     pokemon = _pokemon_from_span(_first(tokens, "POKEMON"))
     source = _pokemon_from_span(_first(tokens, "SOURCE"))
@@ -197,7 +281,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
         count = _int_value(_first(tokens, "NUMBER"))
         return [
             MoveOutcomeEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 outcome=static["outcome"],
                 target=pokemon or target,
                 count=count,
@@ -207,7 +291,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
     if kind == "stat_stage_operation":
         return [
             StatStageOperationEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 operation=static["operation"],
                 pokemon=pokemon,
                 target=target,
@@ -217,7 +301,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
     if kind == "held_item_changed":
         return [
             HeldItemChangedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 change=static["change"],
                 pokemon=pokemon,
                 item=item,
@@ -229,7 +313,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
     if kind == "move_failed":
         return [
             MoveFailedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 actor=pokemon,
                 move=move or "",
                 reason=static.get("reason", "failed"),
@@ -239,7 +323,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
     if kind == "move_availability_changed":
         return [
             MoveAvailabilityChangedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 restriction=static["restriction"],
                 pokemon=pokemon,
                 move=move,
@@ -251,7 +335,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
     if kind == "field_effect_changed":
         return [
             FieldEffectChangedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 effect=static["effect"],
                 action=static["action"],
                 source=pokemon or source,
@@ -261,7 +345,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
     if kind == "perish_song_started":
         return [
             PerishSongStartedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 turns_remaining=static.get("turns_remaining", 3),
                 source=pokemon,
             )
@@ -270,7 +354,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
     if kind == "switch_lock_started":
         return [
             SwitchLockStartedEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 scope=static.get("scope", "all_active"),
                 source=pokemon,
             )
@@ -279,21 +363,34 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
     if kind == "move_used":
         if pokemon is None or move is None:
             return []
-        return [MoveUsedEvent(raw_text=raw_text, actor=pokemon, move=move, targets=[])]
+        return [
+            MoveUsedEvent(
+                raw_text=canonical_text,
+                actor=pokemon,
+                move=move,
+                targets=[],
+            )
+        ]
 
     if kind == "faint":
         if pokemon is None:
             return []
-        return [FaintEvent(raw_text=raw_text, pokemon=pokemon)]
+        return [FaintEvent(raw_text=canonical_text, pokemon=pokemon)]
 
     if kind == "mega_evolution":
         if pokemon is None:
             return []
         variant = _mega_variant(item, species.species if species else None)
-        return [MegaEvolutionEvent(raw_text=raw_text, pokemon=pokemon, variant=variant)]
+        return [
+            MegaEvolutionEvent(
+                raw_text=canonical_text,
+                pokemon=pokemon,
+                variant=variant,
+            )
+        ]
 
     if kind == "trick_room_start":
-        return [TrickRoomStartEvent(raw_text=raw_text)]
+        return [TrickRoomStartEvent(raw_text=canonical_text)]
 
     if kind == "stat_change":
         stat = _value(_first(tokens, "STAT"))
@@ -304,7 +401,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
             return []
         return [
             StatChangeEvent(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 pokemon=pokemon,
                 stat=stat,  # type: ignore[arg-type]
                 stages_delta=delta,
@@ -320,7 +417,7 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
         event_cls = StatusCuredEvent if cured else StatusAppliedEvent
         return [
             event_cls(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 pokemon=pokemon,
                 status=status,  # type: ignore[arg-type]
             )
@@ -335,14 +432,14 @@ def emit_tokenized_match(raw_text: str, match: TokenizedMatch) -> list[BattleLog
         event_cls = VolatileCuredEvent if cured else VolatileAppliedEvent
         return [
             event_cls(
-                raw_text=raw_text,
+                raw_text=canonical_text,
                 pokemon=pokemon,
                 volatile=volatile,  # type: ignore[arg-type]
             )
         ]
 
     if kind == "switch":
-        return _emit_switch(raw_text, match.pattern, tokens)
+        return _emit_switch(canonical_text, match.pattern, tokens)
 
     return []
 

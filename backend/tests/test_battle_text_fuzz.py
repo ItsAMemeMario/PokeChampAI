@@ -194,6 +194,7 @@ def _pick_species_fill(
     side_hint: str | None,
     used_on_side: dict[str, set[str]],
     force_bare: bool = False,
+    opposing_article: str = "the",
 ) -> str:
     """Pick a team species. Free-side opponent fills use ``the opposing`` prefix.
 
@@ -215,7 +216,7 @@ def _pick_species_fill(
     species = rng.choice(unused or pool)
     used_on_side[side].add(species)
     if with_prefix and not force_bare:
-        return f"the opposing {species}"
+        return f"{opposing_article} opposing {species}"
     return species
 
 
@@ -243,6 +244,8 @@ def _fill_pattern(
     def token_value(match: re.Match[str]) -> str:
         nonlocal owner_species, owner_side
         name = match.group(1)
+        before = pattern[: match.start()].rstrip()
+        opposing_article = "The" if not before or before[-1] in ".!?" else "the"
 
         if name in {"POKEMON", "TARGET", "SOURCE"}:
             value = _pick_species_fill(
@@ -250,6 +253,7 @@ def _fill_pattern(
                 rng,
                 side_hint=side_hint_value,
                 used_on_side=used_on_side,
+                opposing_article=opposing_article,
             )
             if name == "POKEMON" and owner_species is None:
                 owner_species = _strip_opposing(value)
@@ -267,6 +271,7 @@ def _fill_pattern(
                 side_hint=owner_side or side_hint_value,
                 used_on_side=used_on_side,
                 force_bare=True,
+                opposing_article=opposing_article,
             )
         elif name == "MOVE":
             if owner_species is not None:
@@ -431,6 +436,10 @@ def test_battle_text_catalog_fuzz_black_box() -> None:
                 token_spans,
                 mutated_positions,
                 ctx=ctx,
+            )
+            assert all(event.raw_text == filled for event in events), (
+                f"{ctx}: canonical raw texts "
+                f"{[event.raw_text for event in events]!r} != {filled!r}"
             )
     finally:
         logging.disable(logging.NOTSET)
