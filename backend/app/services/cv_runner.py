@@ -327,21 +327,12 @@ async def _process_frame(
         store.begin_battle()
         publish_phase(store)
         await _process_team_preview_entry(store, frame)
-
-    if transition.current == BattlePhase.TEAM_SELECTED:
-        await asyncio.to_thread(
-            _process_team_selected_frame,
-            store,
-            frame,
-            region_config,
-        )
-
-    if transition.entered_battle:
+    elif transition.entered_battle:
         ensure_seeded(store)
         publish_state(store)
-
-    if transition.entered_action_selection:
+    elif transition.entered_action_selection:
         _emit_turn_start_on_action_selection_entry(store)
+        publish_phase(store)
         await asyncio.to_thread(
             _process_hp_action_selection_snapshot,
             store,
@@ -350,6 +341,16 @@ async def _process_frame(
             region_config,
         )
         await _process_turn_suggestion(store)
+    elif store.phase != previous_phase:
+        publish_phase(store)
+
+    if transition.current == BattlePhase.TEAM_SELECTED:
+        await asyncio.to_thread(
+            _process_team_selected_frame,
+            store,
+            frame,
+            region_config,
+        )
 
     if transition.current == BattlePhase.BATTLE_ANIMATION:
         player_species = store.player_selected_species
@@ -384,9 +385,6 @@ async def _process_frame(
             BattlePhase.BATTLE_ANIMATION,
         ):
             hp_reader.reset()
-
-    if store.phase != previous_phase:
-            publish_phase(store)
 
     return transition.current
 
