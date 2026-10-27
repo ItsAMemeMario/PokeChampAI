@@ -322,9 +322,6 @@ async def _process_frame(
     previous_phase = store.phase
     store.phase = transition.current
 
-    if store.phase != previous_phase:
-        publish_phase(store)
-
     if transition.entered_team_preview:
         store.begin_battle()
         await _process_team_preview_entry(store, frame)
@@ -385,6 +382,9 @@ async def _process_frame(
             BattlePhase.BATTLE_ANIMATION,
         ):
             hp_reader.reset()
+
+    if store.phase != previous_phase:
+            publish_phase(store)
 
     return transition.current
 
