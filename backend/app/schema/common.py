@@ -3,9 +3,9 @@ from typing import Literal
 from pydantic import BaseModel
 
 Side = Literal["player", "opponent"]
-Slot = Literal[1, 2]
+Slot = Literal[1, 2] | None
 
 class Pokemon(BaseModel):
     species: str
     side: Side
-    slot: Slot
+    slot: Slot = None

@@ -7,6 +7,7 @@ Turn boundaries are emitted as ``turn_start`` when the phase detector enters
 
 from __future__ import annotations
 
+import logging
 from typing import Iterable
 
 from app.schema.battle_log import (
@@ -55,6 +56,8 @@ from app.schema.gamestate import (
 )
 from app.schema.team import PlayerTeam
 from app.services.session import SessionStore
+
+logger = logging.getLogger(__name__)
 
 # Gen 9 doubles defaults when a condition is first applied.
 _TAILWIND_TURNS = 4
@@ -617,8 +620,8 @@ def _apply_faint(state: GameState, event: FaintEvent) -> GameState:
     # Really a redundant fail-safe, in case rounding errors cause HP to be > 0% when fainting
     def update(active: ActivePokemon) -> ActivePokemon:
         return active.model_copy(update={"hp_percentage": 0})
-
-    return _update_active(state, event.pokemon, update)
+    updated = _update_active(state, event.pokemon, update)
+    return _apply_switch_out(updated, SwitchOutEvent(raw_text="", pokemon=event.pokemon))
 
 
 def _apply_switch_out(state: GameState, event: SwitchOutEvent) -> GameState:
@@ -994,16 +997,18 @@ def _take_from_bench(
 
 
 def _resolve_switch_in_slot(side: SideState, pokemon: Pokemon) -> Slot:
-    # Prefer explicit empty slot matching event.slot when free or same species.
+    # Prefer explicit empty slot when unspecified, or slot 1 when both slots empty.
     preferred = pokemon.slot
-    current = side.slot_1 if preferred == 1 else side.slot_2
-    if current is None or _species_matches(current.species, pokemon.species):
+    if preferred is not None:
+        if (preferred == 1 and side.slot_1 is not None) or (preferred == 2 and side.slot_2 is not None):
+            logger.info("Switching in to non-empty slot")
         return preferred
-    other: Slot = 2 if preferred == 1 else 1
-    other_mon = side.slot_2 if preferred == 1 else side.slot_1
-    if other_mon is None:
-        return other
-    return preferred
+    if side.slot_1 is None:
+        return 1
+    if side.slot_2 is None:
+        return 2
+    logger.info("Switching in with no empty slot")
+    return 1
 
 
 def _find_active(
@@ -1015,9 +1020,10 @@ def _find_active(
         (2, side.slot_2),
     )
     # Exact slot + species
-    by_slot = side.slot_1 if pokemon.slot == 1 else side.slot_2
-    if by_slot is not None and _species_matches(by_slot.species, pokemon.species):
-        return pokemon.slot, by_slot
+    if pokemon.slot is not None:
+      by_slot = side.slot_1 if pokemon.slot == 1 else side.slot_2
+      if _species_matches(by_slot.species, pokemon.species):
+          return pokemon.slot, by_slot
 
     matches = [
         (slot, active)
@@ -1026,9 +1032,6 @@ def _find_active(
     ]
     if len(matches) == 1:
         return matches[0]
-    if by_slot is not None and pokemon.species:
-        # Slot known but species OCR drifted — still update that slot.
-        return pokemon.slot, by_slot
     return None, None
 
 

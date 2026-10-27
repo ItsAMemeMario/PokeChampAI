@@ -50,6 +50,7 @@ from app.schema.battle_log import (
     VolatileCuredEvent,
 )
 from app.schema.common import Pokemon, Side, Slot
+from app.util.legal_snap import snap_to_legal
 
 
 _TOKEN_RE = re.compile(r"\[([A-Z][A-Z0-9_]*)\]")
@@ -1072,11 +1073,11 @@ def _pokemon_from_span(
     span: TokenSpan | None,
     *,
     side: Side | None = None,
-    slot: Slot = 1,
+    slot: Slot = None,
 ) -> Pokemon | None:
     if span is None or span.value is None:
         return None
-    return Pokemon(species=span.value, side=side or span.side or "player", slot=slot)
+    return Pokemon(species=snap_to_legal(span.value, REGULATION_MB_SPECIES), side=side or span.side or "player", slot=slot)
 
 
 def _mega_variant(item: str | None, species: str | None) -> Literal["regular", "X", "Y", "Z"]:

@@ -82,6 +82,7 @@ async def _process_team_preview_entry(store: SessionStore, frame) -> None:
     try:
         opponent = await read_opponent_team_preview(frame, config, gemini=gemini)
         store.opponent_team_species = opponent.species
+        publish_team_preview(store)
         store.team_preview_suggestion = await gemini.suggest_team_preview(
             store.player_team,
             opponent.species,
@@ -324,6 +325,7 @@ async def _process_frame(
 
     if transition.entered_team_preview:
         store.begin_battle()
+        publish_phase(store)
         await _process_team_preview_entry(store, frame)
 
     if transition.current == BattlePhase.TEAM_SELECTED:

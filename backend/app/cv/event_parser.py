@@ -386,7 +386,7 @@ def _pokemon(
     species: str,
     side: Side,
     *,
-    slot: Slot = 1,
+    slot: Slot = None,
     player_species: Iterable[str] | None = None,
     opponent_species: Iterable[str] | None = None,
 ) -> Pokemon:
@@ -439,7 +439,7 @@ def parse_side_banner(
     text: str,
     side: Side,
     *,
-    slot: Slot = 1,
+    slot: Slot = None,
     effect_text: str = "",
     player_species: Iterable[str] | None = None,
     opponent_species: Iterable[str] | None = None,
