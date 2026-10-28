@@ -11,8 +11,9 @@ import numpy as np
 from app.cv.event_parser import parse_battle_text, parse_side_banner
 from app.cv.ocr_reader import map_parallel, read_text
 from app.cv.regions import RegionConfig, config_for_image, crop_region
-from app.schema.battle_log import BattleLogEvent, LeadInEvent
+from app.schema.battle_log import BattleLogEvent
 from app.schema.common import Side, Slot
+from app.util.event_identity import semantic_key
 
 logger = logging.getLogger(__name__)
 
@@ -172,33 +173,7 @@ class EventOcrEngine:
 
 def _event_fingerprint(event: BattleLogEvent) -> tuple:
     """Identity for OCR re-emit suppression (ignores brittle raw OCR text)."""
-    key: list[object] = [event.type]
-    if isinstance(event, LeadInEvent):
-        key.extend([event.side, event.slot_1.species, event.slot_2.species])
-        return tuple(key)
-    pokemon = getattr(event, "pokemon", None) or getattr(event, "actor", None)
-    if pokemon is not None:
-        # switch_in/out: omit slot — a bad single-lead OCR often defaults slot=1,
-        # then a cleaner reading may assign the true slot.
-        if event.type in {"switch_in", "switch_out"}:
-            key.extend([pokemon.species, pokemon.side])
-        else:
-            key.extend([pokemon.species, pokemon.side, pokemon.slot])
-    if event.type == "stat_change":
-        key.extend([event.stat, event.stages_delta])
-    if event.type in {"move_used", "move_failed"}:
-        key.append(getattr(event, "move", None))
-    if event.type == "item_used":
-        key.append(getattr(event, "item", None))
-    if event.type == "ability_triggered":
-        key.append(getattr(event, "ability", None))
-    if event.type in {"status_applied", "status_cured", "volatile_applied", "volatile_cured"}:
-        key.append(getattr(event, "status", None) or getattr(event, "volatile", None))
-    if event.type in {"weather_start", "weather_end"}:
-        key.append(getattr(event, "weather", None))
-    if event.type in {"terrain_start", "terrain_end"}:
-        key.append(getattr(event, "terrain", None))
-    return tuple(key)
+    return semantic_key(event)
 
 
 def _region_has_content(crop_rgb: np.ndarray, region_name: str) -> bool:

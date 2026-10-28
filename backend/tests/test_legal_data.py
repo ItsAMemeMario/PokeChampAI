@@ -51,6 +51,12 @@ def test_snap_to_legal_typo() -> None:
     assert snap_to_legal("earthquak", REGULATION_MB_MOVES) == "Earthquake"
 
 
+def test_snap_to_legal_rejects_empty_and_unrelated_values() -> None:
+    assert snap_to_legal("", REGULATION_MB_SPECIES) is None
+    assert snap_to_legal("qzxwv", REGULATION_MB_SPECIES) is None
+    assert snap_to_legal("Garchomp", []) is None
+
+
 def test_snap_to_legal_known_list_resolves_forms() -> None:
     # Species clause: only one Arcanine* can be known; OCR never has form suffixes.
     known = ["Arcanine-Hisui", "Incineroar", "Sinistcha", "Staraptor"]

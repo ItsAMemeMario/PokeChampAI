@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+import app.cv.event_ocr as event_ocr
 from app.cv.event_ocr import EventOcrEngine, _region_changed, _region_has_content
 from app.cv.regions import crop_region, default_assets_dir, load_regions
 from app.schema.battle_log import TurnStartEvent
@@ -193,6 +194,67 @@ def test_event_ocr_engine_does_not_re_emit_after_region_clears(
 
     assert len(first) == 1
     assert second == []
+
+
+def test_event_ocr_suppresses_semantically_identical_ocr_jitter(monkeypatch) -> None:
+    """Different OCR strings for one message must share an event fingerprint."""
+
+    class FakeConfig:
+        def get(self, name: str) -> str:
+            return name
+
+    engine = EventOcrEngine()
+    image = np.zeros((8, 8, 3), dtype=np.uint8)
+    texts = iter(["Garchomp used Earthquake!", "Garchomp used Earthquakel"])
+
+    monkeypatch.setattr(
+        event_ocr,
+        "_EVENT_REGIONS",
+        (("battle_text", None, None),),
+    )
+    monkeypatch.setattr(event_ocr, "config_for_image", lambda config, _image: config)
+    monkeypatch.setattr(event_ocr, "crop_region", lambda _image, _region: image)
+    monkeypatch.setattr(event_ocr, "_region_has_content", lambda *_args: True)
+    monkeypatch.setattr(event_ocr, "_region_changed", lambda *_args: True)
+    monkeypatch.setattr(
+        event_ocr,
+        "map_parallel",
+        lambda _worker, jobs: [next(texts) for _ in jobs],
+    )
+
+    first = engine.process_frame(
+        image,
+        FakeConfig(),  # type: ignore[arg-type]
+        player_species=["Garchomp"],
+    )
+    second = engine.process_frame(
+        image,
+        FakeConfig(),  # type: ignore[arg-type]
+        player_species=["Garchomp"],
+    )
+
+    assert len(first) == 1
+    assert first[0].type == "move_used"
+    assert first[0].actor.species == "Garchomp"
+    assert first[0].move == "Earthquake"
+    assert second == []
+
+
+@patch("app.cv.event_ocr._ocr_text", return_value="Staraptor's Intimidate")
+def test_event_ocr_reset_allows_same_message_to_emit_again(
+    _mock_ocr,
+    region_config,
+) -> None:
+    engine = EventOcrEngine()
+    image = _load_asset("player_slot_1_banner.png")
+
+    first = engine.process_frame(image, region_config)
+    engine.reset()
+    second = engine.process_frame(image, region_config)
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert first[0].type == second[0].type == "ability_triggered"
 
 
 @patch("app.cv.event_ocr._ocr_text")

@@ -5,39 +5,57 @@ from __future__ import annotations
 import logging
 import re
 from contextvars import ContextVar
-from typing import Iterable
+from dataclasses import dataclass
+from typing import Any, Iterable
 
+from rapidfuzz import fuzz, process
+
+from app.cv.battle_text_catalog import (
+    BattleTextTemplate,
+    catalog_templates,
+    normalize_catalog_text,
+    template_candidate_strings,
+)
+from app.cv.battle_text_matchers import (
+    emit_tokenized_match,
+    match_tokenized_catalog_template,
+)
 from app.schema.battle_log import (
     AbilityTriggeredEvent,
     BattleLogEvent,
-    FaintEvent,
-    LeadInEvent,
-    MegaEvolutionEvent,
+    FieldEffectChangedEvent,
+    HeldItemChangedEvent,
+    MoveAvailabilityChangedEvent,
     MoveFailedEvent,
-    MoveUsedEvent,
+    MoveOutcomeEvent,
     ItemUsedEvent,
+    PerishSongStartedEvent,
     SideConditionEvent,
     StatChangeEvent,
-    StatusAppliedEvent,
-    StatusCuredEvent,
-    SwitchInEvent,
-    SwitchOutEvent,
+    StatStageOperationEvent,
+    SwitchLockStartedEvent,
     TerrainEndEvent,
     TerrainStartEvent,
     TrickRoomStartEvent,
     TrickRoomEndEvent,
-    VolatileAppliedEvent,
-    VolatileCuredEvent,
     WeatherEndEvent,
     WeatherStartEvent,
 )
 from app.data.abilities import REGULATION_MB_ABILITIES
 from app.data.items import REGULATION_MB_ITEMS, is_regulation_mb_item
-from app.data.moves import REGULATION_MB_MOVES
 from app.schema.common import Pokemon, Side, Slot
+from app.util.event_identity import semantic_key
 from app.util.legal_snap import snap_to_legal
 
 logger = logging.getLogger(__name__)
+
+# Fixed-template RapidFuzz gates.
+_FIXED_SCORE_CUTOFF = 88.0
+# A small number of random substitutions can make neighboring full templates
+# score within a couple of points.  Reject only true ties after positional
+# rescoring instead of dropping a recoverable event.
+_FIXED_AMBIGUITY_MARGIN = 0.25
+_FIXED_WORD_RE = re.compile(r"[A-Za-z0-9]+")
 
 _PLAYER_SPECIES: ContextVar[tuple[str, ...]] = ContextVar(
     "event_parser_player_species",
@@ -66,47 +84,18 @@ _STAT_ALIASES: dict[str, str] = {
     "evasion": "evasion",
 }
 
-_OPPOSING = r"(?:the\s+opposing\s+)?"
-_SIDE_PHRASE = r"(?:your|the\s+opposing|the\s+opponent['\u2019]?s)"
+_STAT_DISPLAY_NAMES: dict[str, str] = {
+    "atk": "Attack",
+    "def": "Defense",
+    "spa": "Sp. Atk",
+    "spd": "Sp. Def",
+    "spe": "Speed",
+    "accuracy": "Accuracy",
+    "evasion": "Evasion",
+}
 
 _SIDE_BANNER_RE = re.compile(
     r"^(?P<species>.+?)['\u2019$]s?\s+(?P<name>.+?)(?:\s*[=!.]+)?$",
-    re.IGNORECASE,
-)
-_MEGA_EVOLUTION_RE = re.compile(
-    _OPPOSING + r"(?P<species>.+?)\s+[a-zA-Z]+ite\s+(?P<mega_form>(X|Y|Z)?)\s*is\s+react",
-    re.IGNORECASE,
-)
-_MOVE_USED_RE = re.compile(
-    # Take the remainder of the line as the move; trailing "!" is often OCR'd as "l".
-    _OPPOSING + r"(?P<species>.+?)\s+use[d]?\s+(?P<move>.+?)\s*$",
-    re.IGNORECASE,
-)
-_FAINT_RE = re.compile(
-    _OPPOSING + r"(?P<species>.+?)\s+faint",
-    re.IGNORECASE,
-)
-_MOVE_FAILED_RE = re.compile(
-    r"^But\s+it\s+failed\s*!?\s*$",
-    re.IGNORECASE,
-)
-_SWITCH_RE = re.compile(
-    r"(?:"
-    # Dual lead switch-ins (must precede single switch-in patterns)
-    # "Gol" is rewritten to "Go!" in normalize_ocr_text; require "Go!" so "Gotcha" is not a hit.
-    r"Go!\s*(?P<player_dual_1>.+?)\s+and\s+(?P<player_dual_2>.+?)"
-    r"|(?P<trainer_dual>.+?)\s+sent\s+out\s+(?P<opponent_dual_1>.+?)\s+and\s+(?P<opponent_dual_2>.+?)"
-    # Switch-out (comma often OCR'd as ";")
-    r"|(?P<player_out>.+?)[,;]\s*come\s+back"
-    r"|(?P<trainer_out>.+?)\s+withdrew\s+(?P<opponent_out>.+?)"
-    r"|" + _OPPOSING + r"(?P<self_out>.+?)\s+went\s+back\s+to\s+(?:.+?)"
-    # Single switch-in
-    r"|Go!\s*(?P<player_in>.+?)"
-    r"|(?P<trainer_in>.+?)\s+sent\s+out\s+(?P<opponent_in>.+?)"
-    r"|" + _OPPOSING + r"(?P<dragged>.+?)\s+got\s+dragged\s+out"
-    # Do not treat bare "l" as a terminator — it steals the final letter of Grimmsnarl et al.
-    # normalize_ocr_text converts trailing OCR "l" into "!".
-    r")\s*[!.]?\s*$",
     re.IGNORECASE,
 )
 _STAT_TAIL_RE = re.compile(
@@ -137,63 +126,18 @@ _STAT_DIRECTION_RE = re.compile(
     re.IGNORECASE,
 )
 _OPPONENT_PREFIX_RE = re.compile(r"^(?:the\s+)?opposing\s+", re.IGNORECASE)
-_STATUS_APPLIED_RE = re.compile(
-    _OPPOSING + r"(?P<species>.+?)\s+"
-    r"(?:"
-    r"was\s+burned"
-    # Showdown: "[POKEMON] is paralyzed! It may be unable to move!"
-    r"|is\s+paralyzed[!.,]?\s*(?:It\s+)?may\s+be\s+unable\s+to\s+move"
-    r"|was\s+badly\s+poisoned"
-    r"|was\s+poisoned"
-    r"|was\s+frozen\s+solid"
-    r"|fell\s+asleep"
-    r")",
-    re.IGNORECASE,
-)
-# Showdown default.ts status/confusion `end` texts only (not endFromItem / etc.).
-_STATUS_CURED_RE = re.compile(
-    _OPPOSING
-    + r"(?P<species>.+?)"
-    r"(?:"
-    r"['\u2019]s\s+burn\s+was\s+healed"
-    r"|\s+thawed\s+out"
-    r"|\s+was\s+cured\s+of\s+paralysis"
-    r"|\s+was\s+cured\s+of\s+its\s+poisoning"
-    r"|\s+woke\s+up"
-    r")",
-    re.IGNORECASE,
-)
-_VOLATILE_APPLIED_RE = re.compile(
-    _OPPOSING + r"(?P<species>.+?)\s+"
-    r"(?:"
-    r"fell\s+for\s+the\s+taunt"
-    r"|must\s+do\s+an\s+encore"
-    r"|became\s+confused"
-    r")",
-    re.IGNORECASE,
-)
-# Confusion only for now
-_VOLATILE_CURED_RE = re.compile(
-    _OPPOSING + r"(?P<species>.+?)\s+snapped\s+out\s+of\s+(?:its\s+)?confusion",
-    re.IGNORECASE,
-)
-_SIDE_CONDITION_RE = re.compile(
-    r"(?:"
-    r"A\s+tailwind\s+started\s+blowing\s+on\s+" + _SIDE_PHRASE + r"\s+side"
-    r"|Reflect\s+made\s+" + _SIDE_PHRASE + r"\s+side\s+stronger\s+against\s+physical\s+moves"
-    r"|Light\s+Screen\s+made\s+" + _SIDE_PHRASE + r"\s+side\s+stronger\s+against\s+special\s+moves"
-    r"|Aurora\s+Veil\s+made\s+" + _SIDE_PHRASE + r"\s+side\s+stronger\s+against\s+physical\s+and\s+special\s+moves"
-    r"|Toxic\s+spikes\s+were\s+scattered\s+on\s+the\s+ground\s+all\s+around\s+" + _SIDE_PHRASE + r"\s+side"
-    r"|Spikes\s+were\s+scattered\s+on\s+the\s+ground\s+all\s+around\s+" + _SIDE_PHRASE + r"\s+side"
-    r"|Pointed\s+stones\s+float\s+in\s+the\s+air\s+around\s+" + _SIDE_PHRASE + r"\s+team"
-    r")",
-    re.IGNORECASE,
-)
+
+
+@dataclass(frozen=True)
+class _FixedMatch:
+    template: BattleTextTemplate
+    score: float
+    matched_text: str
 
 
 def normalize_ocr_text(text: str) -> str:
     """Normalize OCR quirks before pattern matching."""
-    cleaned = text.replace("\u2019", "'")
+    cleaned = normalize_catalog_text(text)
     # EasyOCR often mangles "'s" as "'$", "' $", "' s", "' 5", or bare "$".
     cleaned = re.sub(r"['\u2019]\s*[\$5sS]\s+", "'s ", cleaned)
     cleaned = re.sub(r"['\u2019]\s*\$", "'s", cleaned)
@@ -215,9 +159,202 @@ def normalize_ocr_text(text: str) -> str:
     return cleaned
 
 
-def _side_from_text(text: str) -> Side:
-    lowered = text.lower()
-    return "opponent" if ("opposing" in lowered or "opponent" in lowered) else "player"
+def _fixed_template_index() -> list[tuple[str, BattleTextTemplate]]:
+    """Build non-token catalog candidates for whole-message fuzzy matching."""
+    pairs: list[tuple[str, BattleTextTemplate]] = []
+    for template in catalog_templates():
+        for candidate in template_candidate_strings(template):
+            pairs.append((candidate, template))
+    return pairs
+
+
+_FIXED_INDEX: list[tuple[str, BattleTextTemplate]] | None = None
+
+
+def _get_fixed_index() -> list[tuple[str, BattleTextTemplate]]:
+    global _FIXED_INDEX
+    if _FIXED_INDEX is None:
+        _FIXED_INDEX = _fixed_template_index()
+    return _FIXED_INDEX
+
+
+def match_fixed_catalog_template(normalized: str) -> _FixedMatch | None:
+    """Best unique fixed-template match, or None if weak/ambiguous/no hit."""
+    if not normalized:
+        return None
+
+    index = _get_fixed_index()
+    if not index:
+        return None
+
+    choices = [text for text, _ in index]
+    # Exact case-insensitive win.
+    lowered = normalized.casefold()
+    for text, template in index:
+        if text.casefold() == lowered:
+            return _FixedMatch(template=template, score=100.0, matched_text=text)
+
+    raw_matches = process.extract(
+        normalized,
+        choices,
+        scorer=fuzz.WRatio,
+        score_cutoff=_FIXED_SCORE_CUTOFF,
+        limit=10,
+    )
+    if not raw_matches:
+        return None
+
+    # Whole-message ratio alone makes an omitted descriptive word look close
+    # to a single OCR substitution (for example "spikes" vs "toxic spikes").
+    # Re-score in word positions; this is still full-template matching, not an
+    # anchor lookup, and keeps noisy fixed messages distinguishable.
+    matches = sorted(
+        (
+            (
+                text,
+                _fixed_positional_score(normalized, text, base_score=float(score)),
+                index,
+            )
+            for text, score, index in raw_matches
+        ),
+        key=lambda match: (-match[1], match[2]),
+    )
+    best_text, best_score, best_idx = matches[0]
+    best_template = index[best_idx][1]
+
+    for other_text, other_score, other_idx in matches[1:]:
+        other_template = index[other_idx][1]
+        if other_template.id == best_template.id:
+            continue
+        if best_score - other_score <= _FIXED_AMBIGUITY_MARGIN:
+            logger.info(
+                "Ambiguous fixed catalog match for %r: %s (%.1f) vs %s (%.1f)",
+                normalized,
+                best_template.id,
+                best_score,
+                other_template.id,
+                other_score,
+            )
+            return None
+
+    return _FixedMatch(
+        template=best_template,
+        score=float(best_score),
+        matched_text=best_text,
+    )
+
+
+def _fixed_positional_score(text: str, candidate: str, *, base_score: float) -> float:
+    """Penalize long candidate words that are absent from the OCR line.
+
+    Keep the primary score as a whole-message ratio. Character substitutions
+    can split or join words, making strict word-by-word alignment unreliable;
+    absence of a descriptive word (``toxic`` versus ``spikes``), however, is a
+    reliable tie-breaker.
+    """
+    penalty = 0.0
+    lowered = text.casefold()
+    for word in _FIXED_WORD_RE.findall(candidate.casefold()):
+        if len(word) < 4:
+            continue
+        word_score = fuzz.partial_ratio(word, lowered)
+        if word_score < 55.0:
+            penalty += (55.0 - word_score) * 0.35
+    return base_score - penalty
+
+
+def _emit_fixed_template(
+    _raw_text: str,
+    match: _FixedMatch,
+) -> list[BattleLogEvent]:
+    """Build BattleLogEvent(s) from a fixed catalog hit."""
+    template = match.template
+    static: dict[str, Any] = dict(template.static)
+    kind = template.event_kind
+    canonical_text = match.matched_text
+
+    if kind == "move_outcome":
+        return [
+            MoveOutcomeEvent(
+                raw_text=canonical_text,
+                outcome=static["outcome"],
+            )
+        ]
+    if kind == "field_effect_changed":
+        return [
+            FieldEffectChangedEvent(
+                raw_text=canonical_text,
+                effect=static["effect"],
+                action=static["action"],
+            )
+        ]
+    if kind == "perish_song_started":
+        return [
+            PerishSongStartedEvent(
+                raw_text=canonical_text,
+                turns_remaining=static.get("turns_remaining", 3),
+            )
+        ]
+    if kind == "switch_lock_started":
+        return [
+            SwitchLockStartedEvent(
+                raw_text=canonical_text,
+                scope=static.get("scope", "all_active"),
+            )
+        ]
+    if kind == "stat_stage_operation":
+        return [
+            StatStageOperationEvent(
+                raw_text=canonical_text,
+                operation=static["operation"],
+            )
+        ]
+    if kind == "held_item_changed":
+        return [
+            HeldItemChangedEvent(
+                raw_text=canonical_text,
+                change=static["change"],
+            )
+        ]
+    if kind == "move_failed":
+        return [
+            MoveFailedEvent(
+                raw_text=canonical_text,
+                reason=static.get("reason", "failed"),
+            )
+        ]
+    if kind == "move_availability_changed":
+        return [
+            MoveAvailabilityChangedEvent(
+                raw_text=canonical_text,
+                restriction=static["restriction"],
+                clears_on_switch=static.get("clears_on_switch"),
+            )
+        ]
+    if kind == "side_condition":
+        return [
+            SideConditionEvent(
+                raw_text=canonical_text,
+                side=static["side"],
+                condition=static["condition"],
+                action=static.get("action", "start"),
+            )
+        ]
+    if kind == "weather_start":
+        return [WeatherStartEvent(raw_text=canonical_text, weather=static["weather"])]
+    if kind == "weather_end":
+        return [WeatherEndEvent(raw_text=canonical_text, weather=static["weather"])]
+    if kind == "terrain_start":
+        return [TerrainStartEvent(raw_text=canonical_text, terrain=static["terrain"])]
+    if kind == "terrain_end":
+        return [TerrainEndEvent(raw_text=canonical_text, terrain=static["terrain"])]
+    if kind == "trick_room_end":
+        return [TrickRoomEndEvent(raw_text=canonical_text)]
+    if kind == "trick_room_start":
+        return [TrickRoomStartEvent(raw_text=canonical_text)]
+
+    logger.warning("No emitter for fixed catalog kind %s (%s)", kind, template.id)
+    return []
 
 
 def _clean_species_raw(species: str) -> str:
@@ -249,7 +386,7 @@ def _pokemon(
     species: str,
     side: Side,
     *,
-    slot: Slot = 1,
+    slot: Slot = None,
     player_species: Iterable[str] | None = None,
     opponent_species: Iterable[str] | None = None,
 ) -> Pokemon:
@@ -263,16 +400,31 @@ def _pokemon(
     return Pokemon(species=snapped, side=side, slot=slot)
 
 
+def _render_pokemon(pokemon: Pokemon) -> str:
+    if pokemon.side == "opponent":
+        return f"The opposing {pokemon.species}"
+    return pokemon.species
+
+
+def _render_stat_change(pokemon: Pokemon, stat: str, stages_delta: int) -> str:
+    """Render one canonical stat-change sentence for the regex fallback."""
+    direction = "rose" if stages_delta > 0 else "fell"
+    magnitude = abs(stages_delta)
+    modifier = {
+        1: "",
+        2: " sharply" if stages_delta > 0 else " harshly",
+        3: " drastically" if stages_delta > 0 else " severely",
+    }.get(magnitude, "")
+    display_stat = _STAT_DISPLAY_NAMES.get(stat, stat)
+    return f"{_render_pokemon(pokemon)}'s {display_stat} {direction}{modifier}!"
+
+
 def _snap_item(name: str) -> str:
     return snap_to_legal(name, REGULATION_MB_ITEMS) or name.strip()
 
 
 def _snap_ability(name: str) -> str:
     return snap_to_legal(name, REGULATION_MB_ABILITIES) or name.strip()
-
-
-def _snap_move(name: str) -> str:
-    return snap_to_legal(name, REGULATION_MB_MOVES) or name.strip()
 
 
 def is_known_item(name: str) -> bool:
@@ -287,7 +439,7 @@ def parse_side_banner(
     text: str,
     side: Side,
     *,
-    slot: Slot = 1,
+    slot: Slot = None,
     effect_text: str = "",
     player_species: Iterable[str] | None = None,
     opponent_species: Iterable[str] | None = None,
@@ -313,16 +465,18 @@ def parse_side_banner(
     )
 
     if is_known_item(name):
+        item = _snap_item(name)
         return ItemUsedEvent(
-            raw_text=text,
+            raw_text=f"{pokemon.species}'s {item}",
             pokemon=pokemon,
-            item=_snap_item(name),
+            item=item,
         )
 
+    ability = _snap_ability(name)
     return AbilityTriggeredEvent(
-        raw_text=text,
+        raw_text=f"{pokemon.species}'s {ability}",
         actor=pokemon,
-        ability=_snap_ability(name),
+        ability=ability,
         effect_text=effect_text,
     )
 
@@ -419,7 +573,7 @@ def _parse_stat_changes(text: str) -> list[StatChangeEvent]:
         for stat_key, delta in clause_stats:
             events.append(
                 StatChangeEvent(
-                    raw_text=text,
+                    raw_text=_render_stat_change(pokemon, stat_key, delta),
                     pokemon=pokemon,
                     stat=stat_key,  # type: ignore[arg-type]
                     stages_delta=delta,
@@ -428,308 +582,19 @@ def _parse_stat_changes(text: str) -> list[StatChangeEvent]:
     return events
 
 
-def _parse_weather(text: str) -> WeatherStartEvent | WeatherEndEvent | None:
-    lowered = text.lower()
-    if "sunlight" in lowered:
-        logger.info("Parsing weather")
-        if "faded" in lowered:
-            return WeatherEndEvent(raw_text=text, weather="sunny")
-        return WeatherStartEvent(raw_text=text, weather="sunny")
-    if re.search(r"\brain\b", lowered):
-        logger.info("Parsing weather")
-        if "stopped" in lowered:
-            return WeatherEndEvent(raw_text=text, weather="rain")
-        return WeatherStartEvent(raw_text=text, weather="rain")
-    if "sandstorm" in lowered or "picked up" in lowered:
-        logger.info("Parsing weather")
-        if "subsided" in lowered:
-            return WeatherEndEvent(raw_text=text, weather="sandstorm")
-        return WeatherStartEvent(raw_text=text, weather="sandstorm")
-    if re.search(r"\bsnow\b", lowered):
-        logger.info("Parsing weather")
-        if "stopped" in lowered:
-            return WeatherEndEvent(raw_text=text, weather="snow")
-        return WeatherStartEvent(raw_text=text, weather="snow")
-    return None
-
-
-def _parse_terrain(text: str) -> TerrainStartEvent | TerrainEndEvent | None:
-    lowered = text.lower()
-    if "battlefield" not in lowered:
-        return None
-    logger.info("Parsing terrain")
-    # End texts first — start cues like "electric" also appear in end lines.
-    if "disappeared" in lowered:
-        if "electric" in lowered:
-            return TerrainEndEvent(raw_text=text, terrain="electric_terrain")
-        if "grass" in lowered:
-            return TerrainEndEvent(raw_text=text, terrain="grassy_terrain")
-        if "mist" in lowered:
-            return TerrainEndEvent(raw_text=text, terrain="misty_terrain")
-        if "weird" in lowered:
-            return TerrainEndEvent(raw_text=text, terrain="psychic_terrain")
-        return None
-    if "electric" in lowered or "current" in lowered:
-        return TerrainStartEvent(raw_text=text, terrain="electric_terrain")
-    if "grass" in lowered or "grew" in lowered:
-        return TerrainStartEvent(raw_text=text, terrain="grassy_terrain")
-    if "mist" in lowered or "swirled" in lowered:
-        return TerrainStartEvent(raw_text=text, terrain="misty_terrain")
-    if "weird" in lowered:
-        return TerrainStartEvent(raw_text=text, terrain="psychic_terrain")
-    return None
-
-def _parse_trick_room(text: str) -> TrickRoomStartEvent | TrickRoomEndEvent | None:
-    lowered = text.lower()
-    if "twisted" in lowered or "dimensions" in lowered:
-        logger.info("Parsing trick room")
-        if "returned" in lowered or "normal" in lowered:
-            return TrickRoomEndEvent(raw_text=text)
-        else:
-            return TrickRoomStartEvent(raw_text=text)
-    return None
-
-
-def _parse_side_condition(text: str) -> SideConditionEvent | None:
-    match = _SIDE_CONDITION_RE.search(text)
-    if not match:
-        return None
-    logger.info("Parsing side condition")
-    lowered = text.lower()
-    side = _side_from_text(text)
-    if "aurora veil" in lowered:
-        condition = "aurora_veil"
-    elif "light screen" in lowered:
-        condition = "light_screen"
-    elif "reflect" in lowered:
-        condition = "reflect"
-    elif "tailwind" in lowered or "blow" in lowered:
-        condition = "tailwind"
-    elif "toxic spikes" in lowered:
-        condition = "toxic_spikes"
-    elif "spikes" in lowered:
-        condition = "spikes"
-    elif "pointed stones" in lowered:
-        condition = "stealth_rocks"
-    else:
-        return None
-    return SideConditionEvent(raw_text=text, side=side, condition=condition)  # type: ignore[arg-type]
-
-
-def _parse_status(text: str) -> StatusAppliedEvent | StatusCuredEvent | None:
-    cured = _STATUS_CURED_RE.search(text)
-    if cured:
-        logger.info("Parsing status cured")
-        species = cured.group("species").strip()
-        lowered = text.lower()
-        side = _side_from_text(text)
-        if "burn" in lowered:
-            status = "brn"
-        elif "paralysis" in lowered:
-            status = "par"
-        elif "poisoning" in lowered:
-            # tox.end redirects to psn.end in Showdown
-            status = "psn"
-        elif "thawed" in lowered:
-            status = "frz"
-        elif "woke" in lowered:
-            status = "slp"
-        else:
-            return None
-        return StatusCuredEvent(
-            raw_text=text,
-            pokemon=_pokemon(species, side),
-            status=status,  # type: ignore[arg-type]
-        )
-
-    match = _STATUS_APPLIED_RE.search(text)
-    if not match:
-        return None
-    logger.info("Parsing status applied")
-    species = match.group("species").strip()
-    lowered = text.lower()
-    side = _side_from_text(text)
-    if "burned" in lowered:
-        status = "brn"
-    elif "paraly" in lowered and ("may" in lowered or "unable" in lowered):
-        status = "par"
-    elif "badly poison" in lowered:
-        status = "tox"
-    elif "poisoned" in lowered:
-        status = "psn"
-    elif "frozen" in lowered and "was" in lowered:
-        status = "frz"
-    elif "sleep" in lowered and "fell" in lowered:
-        status = "slp"
-    else:
-        return None
-    return StatusAppliedEvent(
-        raw_text=text,
-        pokemon=_pokemon(species, side),
-        status=status,  # type: ignore[arg-type]
-    )
-
-
-def _parse_volatile(text: str) -> VolatileAppliedEvent | VolatileCuredEvent | None:
-    cured = _VOLATILE_CURED_RE.search(text)
-    if cured:
-        logger.info("Parsing volatile cured")
-        return VolatileCuredEvent(
-            raw_text=text,
-            pokemon=_pokemon(cured.group("species").strip(), _side_from_text(text)),
-            volatile="confused",
-        )
-
-    match = _VOLATILE_APPLIED_RE.search(text)
-    if not match:
-        return None
-    logger.info("Parsing volatile applied")
-    species = match.group("species").strip()
-    lowered = text.lower()
-    side = _side_from_text(text)
-    if "fell for the taunt" in lowered:
-        volatile = "taunted"
-    elif "must do an encore" in lowered:
-        volatile = "encore"
-    elif "became confused" in lowered:
-        volatile = "confused"
-    else:
-        return None
-    return VolatileAppliedEvent(
-        raw_text=text,
-        pokemon=_pokemon(species, side),
-        volatile=volatile,  # type: ignore[arg-type]
-    )
-
-
-def _parse_switch(text: str) -> list[BattleLogEvent]:
-    match = _SWITCH_RE.search(text)
-    if not match:
-        return []
-    logger.info("Parsing switch")
-    lowered = text.lower()
-    if match.group("player_dual_1") is not None:
-        return [
-            LeadInEvent(
-                raw_text=text,
-                side="player",
-                slot_1=_pokemon(match.group("player_dual_1"), "player", slot=1),
-                slot_2=_pokemon(match.group("player_dual_2"), "player", slot=2),
-            )
-        ]
-    if match.group("opponent_dual_1") is not None:
-        return [
-            LeadInEvent(
-                raw_text=text,
-                side="opponent",
-                slot_1=_pokemon(match.group("opponent_dual_1"), "opponent", slot=1),
-                slot_2=_pokemon(match.group("opponent_dual_2"), "opponent", slot=2),
-            )
-        ]
-    if match.group("player_out") is not None or "come back" in lowered:
-        return [
-            SwitchOutEvent(
-                raw_text=text,
-                pokemon=_pokemon(match.group("player_out"), "player"),
-            )
-        ]
-    if match.group("opponent_out") is not None or "withdrew" in lowered:
-        return [
-            SwitchOutEvent(
-                raw_text=text,
-                pokemon=_pokemon(match.group("opponent_out"), "opponent"),
-            )
-        ]
-    if match.group("self_out") is not None or "went back to" in lowered:
-        return [
-            SwitchOutEvent(
-                raw_text=text,
-                pokemon=_pokemon(match.group("self_out"), _side_from_text(text)),
-            )
-        ]
-    if match.group("player_in") is not None:
-        return [
-            SwitchInEvent(
-                raw_text=text,
-                pokemon=_pokemon(match.group("player_in"), "player"),
-            )
-        ]
-    if match.group("opponent_in") is not None or "sent out" in lowered:
-        return [
-            SwitchInEvent(
-                raw_text=text,
-                pokemon=_pokemon(match.group("opponent_in"), "opponent"),
-            )
-        ]
-    if match.group("dragged") is not None or "got dragged out" in lowered:
-        return [
-            SwitchInEvent(
-                raw_text=text,
-                pokemon=_pokemon(match.group("dragged"), _side_from_text(text)),
-            )
-        ]
-    return []
-
-
-def _parse_mega_evolution(text: str) -> MegaEvolutionEvent | None:
-    match = _MEGA_EVOLUTION_RE.search(text)
-    if not match:
-        return None
-    logger.info("Parsing mega evolution")
-    species = match.group("species").strip()
-    species = re.sub(r"['\u2019]s$", "", species).strip()
-    mega_form = (match.group("mega_form") or "").strip().upper()
-    variant = mega_form if mega_form in {"X", "Y", "Z"} else "regular"
-    return MegaEvolutionEvent(
-        raw_text=text,
-        pokemon=_pokemon(species, _side_from_text(text)),
-        variant=variant,  # type: ignore[arg-type]
-    )
-
-
-def _parse_move_used(text: str) -> MoveUsedEvent | None:
-    match = _MOVE_USED_RE.search(text)
-    if not match:
-        return None
-    logger.info("Parsing move used")
-    # Trailing bang / OCR-as-l is already normalized to "!" before this runs.
-    move = match.group("move").strip().rstrip("!.,").strip()
-    if not move:
-        return None
-    return MoveUsedEvent(
-        raw_text=text,
-        actor=_pokemon(match.group("species"), _side_from_text(text)),
-        move=_snap_move(move),
-        targets=[],
-    )
-
-
-def _parse_faint(text: str) -> FaintEvent | None:
-    match = _FAINT_RE.search(text)
-    if not match:
-        return None
-    logger.info("Parsing faint")
-    return FaintEvent(
-        raw_text=text,
-        pokemon=_pokemon(match.group("species"), _side_from_text(text)),
-    )
-
-
-def _parse_move_failed(text: str) -> MoveFailedEvent | None:
-    if _MOVE_FAILED_RE.match(text) is None:
-        return None
-    logger.info("Parsing move failed")
-    # Actor resolved later by most recent move used
-    return MoveFailedEvent(raw_text=text)
-
-
 def parse_battle_text(
     text: str,
     *,
     player_species: Iterable[str] | None = None,
     opponent_species: Iterable[str] | None = None,
 ) -> list[BattleLogEvent]:
-    """Parse bottom battle-text OCR into one or more typed events."""
+    """Parse bottom battle-text OCR into one or more typed events.
+
+    Dispatch order:
+    1. Whole-message matching for patterns with no dynamic tokens.
+    2. Token-first positional fuzzy matching for every variable template.
+    3. The multi-subject stat-clause parser.
+    """
     logger.info("Parsing battle text: %s", text)
     normalized = normalize_ocr_text(text)
     logger.info("Normalized OCR text: %s", normalized)
@@ -738,31 +603,43 @@ def parse_battle_text(
 
     player_token = None
     opponent_token = None
+    player_snapshot: tuple[str, ...] | None = None
+    opponent_snapshot: tuple[str, ...] | None = None
     if player_species is not None:
-        player_token = _PLAYER_SPECIES.set(tuple(player_species))
+        player_snapshot = tuple(player_species)
+        player_token = _PLAYER_SPECIES.set(player_snapshot)
     if opponent_species is not None:
-        opponent_token = _OPPONENT_SPECIES.set(tuple(opponent_species))
+        opponent_snapshot = tuple(opponent_species)
+        opponent_token = _OPPONENT_SPECIES.set(opponent_snapshot)
     try:
-        events: list[BattleLogEvent] = []
+        fixed = match_fixed_catalog_template(normalized)
+        if fixed is not None:
+            logger.info(
+                "Fixed catalog match: %s (score=%.1f)",
+                fixed.template.id,
+                fixed.score,
+            )
+            return _dedupe_events(_emit_fixed_template(text, fixed))
 
-        for multi_parser in (_parse_stat_changes, _parse_switch):
-            events.extend(multi_parser(normalized))
+        tokenized = match_tokenized_catalog_template(
+            normalized,
+            player_species=player_snapshot,
+            opponent_species=opponent_snapshot,
+        )
+        if tokenized is not None:
+            logger.info(
+                "Token-first catalog match: %s (score=%.1f)",
+                tokenized.template.id,
+                tokenized.score,
+            )
+            emitted = emit_tokenized_match(text, tokenized)
+            if emitted:
+                return _dedupe_events(emitted)
 
-        for single_parser in (
-            _parse_mega_evolution,
-            _parse_move_used,
-            _parse_move_failed,
-            _parse_faint,
-            _parse_status,
-            _parse_volatile,
-            _parse_weather,
-            _parse_terrain,
-            _parse_trick_room,
-            _parse_side_condition,
-        ):
-            event = single_parser(normalized)
-            if event is not None:
-                events.append(event)
+        # One Champions line can describe multiple subjects and/or multiple
+        # stats. It has no one-to-one token layout, so retain this specialized
+        # multi-event parser after generic template matching.
+        events: list[BattleLogEvent] = _parse_stat_changes(normalized)
 
         logger.info(
             "Parsing complete, added events: %s",
@@ -776,30 +653,11 @@ def parse_battle_text(
             _OPPONENT_SPECIES.reset(opponent_token)
 
 
-def _event_dedupe_key(event: BattleLogEvent) -> tuple:
-    key: list[object] = [event.type, event.raw_text]
-    if isinstance(event, LeadInEvent):
-        key.extend([event.side, event.slot_1.species, event.slot_2.species])
-        return tuple(key)
-    pokemon = getattr(event, "pokemon", None) or getattr(event, "actor", None)
-    if pokemon is not None:
-        key.extend([pokemon.species, pokemon.side, pokemon.slot])
-    if event.type == "stat_change":
-        key.extend([event.stat, event.stages_delta])
-    if event.type in {"move_used", "move_failed"}:
-        key.append(event.move)
-    if event.type in {"status_applied", "status_cured"}:
-        key.append(event.status)
-    if event.type in {"volatile_applied", "volatile_cured"}:
-        key.append(event.volatile)
-    return tuple(key)
-
-
 def _dedupe_events(events: Iterable[BattleLogEvent]) -> list[BattleLogEvent]:
     seen: set[tuple] = set()
     unique: list[BattleLogEvent] = []
     for event in events:
-        key = _event_dedupe_key(event)
+        key = semantic_key(event, include_raw_text=True)
         if key in seen:
             continue
         seen.add(key)

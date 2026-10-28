@@ -621,3 +621,38 @@ async def test_get_turn_suggestion_endpoint() -> None:
     body = response.json()
     assert body["suggestion"]["turn_number"] == 3
     assert len(body["suggestion"]["actions"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_interaction_retries_until_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_interaction = MagicMock()
+    mock_interaction.id = "int_retry_success"
+    mock_interaction.output_text = '{"status": "ok"}'
+
+    mock_create = AsyncMock(
+        side_effect=[
+            RuntimeError("Network timeout 499"),
+            RuntimeError("503 Service Unavailable"),
+            mock_interaction,
+        ]
+    )
+    mock_aio_interactions = MagicMock()
+    mock_aio_interactions.create = mock_create
+    mock_client = MagicMock()
+    mock_client.aio.interactions = mock_aio_interactions
+
+    service = GeminiService(api_key="test-key", client=mock_client)
+
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("asyncio.sleep", sleep_mock)
+
+    output = await service._create_interaction(
+        input="test",
+        response_schema={"type": "object"},
+        initial_delay=0.1,
+    )
+
+    assert output == '{"status": "ok"}'
+    assert service.interaction_id == "int_retry_success"
+    assert mock_create.await_count == 3
+    assert sleep_mock.await_count == 2

@@ -28,7 +28,7 @@ _FIGHT_PURPLE_RATIO_MIN = 70.0
 _FIGHT_TEMPLATE_SCORE_MIN = 0.55
 _STANDBY_TEMPLATE_SCORE_MIN = 0.55
 # Near-gray + bright mask for white UI prompt text (standby / team preview / selection).
-_STANDBY_CHROMA_MAX = 25
+_STANDBY_CHROMA_MAX = 45
 _STANDBY_BRIGHT_MIN = 160
 
 _BATTLE_END_TEXTS = ("forfeit", "forteit", "you defeated", "you lost to", "has ended")

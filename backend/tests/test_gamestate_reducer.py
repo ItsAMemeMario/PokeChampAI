@@ -7,17 +7,23 @@ from datetime import datetime
 from app.schema.battle_log import (
     AbilityTriggeredEvent,
     FaintEvent,
+    FieldEffectChangedEvent,
+    HeldItemChangedEvent,
     HPChangeEvent,
     ItemUsedEvent,
     LeadInEvent,
     MegaEvolutionEvent,
+    MoveAvailabilityChangedEvent,
     MoveFailedEvent,
     MoveUsedEvent,
+    PerishSongStartedEvent,
     SideConditionEvent,
     StatChangeEvent,
+    StatStageOperationEvent,
     StatusAppliedEvent,
     StatusCuredEvent,
     SwitchInEvent,
+    SwitchLockStartedEvent,
     SwitchOutEvent,
     TerrainEndEvent,
     TerrainStartEvent,
@@ -57,11 +63,12 @@ def _active(
     revealed_item: str | None = None,
     revealed_ability: str | None = None,
     revealed_moves: list[str] | None = None,
+    stat_stages: StatStages | None = None,
 ) -> ActivePokemon:
     return ActivePokemon(
         species=species,
         hp_percentage=hp,
-        stat_stages=StatStages(),
+        stat_stages=stat_stages or StatStages(),
         revealed_item=revealed_item,
         revealed_ability=revealed_ability,
         revealed_moves=revealed_moves or [],
@@ -725,3 +732,438 @@ Jolly Nature
     assert state.player.slot_1.revealed_ability == "Hospitality"
     assert state.player.slot_1.revealed_item == "Sitrus Berry"
     assert "Matcha Gotcha" in state.player.slot_1.revealed_moves
+
+
+def test_spikes_layers_do_not_touch_toxic_spikes() -> None:
+    state = empty_game_state()
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Spikes",
+            side="opponent",
+            condition="spikes",
+        ),
+    )
+    assert state.opponent.hazards.spikes == 1
+    assert state.opponent.hazards.toxic_spikes == 0
+
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Spikes again",
+            side="opponent",
+            condition="spikes",
+        ),
+    )
+    assert state.opponent.hazards.spikes == 2
+    assert state.opponent.hazards.toxic_spikes == 0
+
+
+def test_side_condition_end_clears_screens_and_hazards() -> None:
+    state = empty_game_state()
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Reflect",
+            side="player",
+            condition="reflect",
+        ),
+    )
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Sticky Web",
+            side="opponent",
+            condition="sticky_web",
+        ),
+    )
+    assert state.player.reflect_turns == 5
+    assert state.opponent.hazards.sticky_web == 1
+
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Reflect wore off",
+            side="player",
+            condition="reflect",
+            action="end",
+        ),
+    )
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Web cleared",
+            side="opponent",
+            condition="sticky_web",
+            action="end",
+        ),
+    )
+    assert state.player.reflect_turns == 0
+    assert state.opponent.hazards.sticky_web == 0
+
+
+def test_perish_song_and_fairy_lock_tick_on_turn_start() -> None:
+    state = _game_state(
+        player_slot_1=_active("Garchomp"),
+        opponent_slot_1=_active("Incineroar"),
+    )
+    state = apply_event(
+        state,
+        PerishSongStartedEvent(
+            raw_text="Perish Song",
+            turns_remaining=3,
+            affected=[
+                _poke("Garchomp"),
+                _poke("Incineroar", side="opponent"),
+            ],
+        ),
+    )
+    state = apply_event(
+        state,
+        SwitchLockStartedEvent(raw_text="Fairy Lock", scope="all_active"),
+    )
+    assert state.player.slot_1 is not None
+    assert state.player.slot_1.perish_turns == 3
+    assert state.field.fairy_lock_turns == 2
+
+    state = apply_event(state, TurnStartEvent(raw_text="Turn 2", turn_number=2))
+    assert state.player.slot_1.perish_turns == 2
+    assert state.opponent.slot_1 is not None
+    assert state.opponent.slot_1.perish_turns == 2
+    assert state.field.fairy_lock_turns == 1
+
+
+def test_weather_suppression_preserves_underlying_weather() -> None:
+    state = empty_game_state()
+    state = apply_event(
+        state,
+        WeatherStartEvent(raw_text="sun", weather="sunny"),
+    )
+    state = apply_event(
+        state,
+        FieldEffectChangedEvent(
+            raw_text="Cloud Nine",
+            effect="weather_suppression",
+            action="start",
+        ),
+    )
+    assert state.field.weather == "sun"
+    assert state.field.weather_suppressed is True
+
+    state = apply_event(
+        state,
+        FieldEffectChangedEvent(
+            raw_text="Cloud Nine ended",
+            effect="weather_suppression",
+            action="end",
+        ),
+    )
+    assert state.field.weather == "sun"
+    assert state.field.weather_suppressed is False
+
+
+def test_held_item_lost_clears_revealed_item() -> None:
+    state = _game_state(
+        opponent_slot_1=_active("Incineroar", revealed_item="Safety Goggles"),
+    )
+    state = apply_event(
+        state,
+        HeldItemChangedEvent(
+            raw_text="Incineroar lost its Safety Goggles!",
+            pokemon=_poke("Incineroar", side="opponent"),
+            change="lost",
+            item="Safety Goggles",
+        ),
+    )
+    assert state.opponent.slot_1 is not None
+    assert state.opponent.slot_1.revealed_item == "Safety Goggles"
+    assert state.opponent.slot_1.item_state == "lost"
+
+
+def test_mega_evolution_sets_mega_used() -> None:
+    state = _game_state(opponent_slot_1=_active("Scizor"))
+    state = apply_event(
+        state,
+        MegaEvolutionEvent(
+            raw_text="Mega Evolved",
+            pokemon=_poke("Scizor", "opponent"),
+            variant="regular",
+        ),
+    )
+    assert state.opponent.mega_used is True
+
+
+def test_rebuild_replays_completer_patched_targets() -> None:
+    """After completer fills move targets, rebuild must keep board + log in sync."""
+    store = SessionStore()
+    store.game_state = _game_state(
+        player_slot_1=_active("Garchomp"),
+        player_slot_2=_active("Sinistcha"),
+        opponent_slot_1=_active("Incineroar"),
+        opponent_slot_2=_active("Aerodactyl"),
+    )
+    store.append_battle_log(TurnStartEvent(raw_text="Turn 1", turn_number=1))
+    store.append_battle_log(
+        MoveUsedEvent(
+            raw_text="Garchomp used Earthquake!",
+            timestamp=datetime(2026, 1, 1),
+            actor=_poke("Garchomp"),
+            move="Earthquake",
+            targets=[],
+        )
+    )
+    move = store.battle_logs[1][1]
+    assert move.type == "move_used"
+    assert len(move.targets) == 3
+    assert store.game_state is not None
+    assert store.game_state.player.slot_1 is not None
+    assert store.game_state.player.slot_1.species == "Garchomp"
+    assert store.game_state.opponent.slot_1 is not None
+    assert store.game_state.opponent.slot_1.species == "Incineroar"
+
+
+def test_stat_stage_operations_apply_deterministically() -> None:
+    player_stages = StatStages(atk=2, spa=1).model_copy(
+        update={"def_": -1, "spd": 0}
+    )
+    opponent_stages = StatStages(atk=-2, spa=-3).model_copy(
+        update={"def_": 4, "spd": 5}
+    )
+    state = _game_state(
+        player_slot_1=_active("Garchomp", stat_stages=player_stages),
+        opponent_slot_1=_active("Incineroar", stat_stages=opponent_stages),
+    )
+    player = _poke("Garchomp")
+    opponent = _poke("Incineroar", "opponent")
+
+    state = apply_event(
+        state,
+        StatStageOperationEvent(
+            raw_text="Garchomp copied Incineroar's stat changes!",
+            operation="copy",
+            pokemon=player,
+            target=opponent,
+        ),
+    )
+    assert state.player.slot_1 is not None
+    assert state.player.slot_1.stat_stages == opponent_stages
+
+    state = apply_event(
+        state,
+        StatStageOperationEvent(
+            raw_text="Garchomp's stat changes were inverted!",
+            operation="invert",
+            pokemon=player,
+        ),
+    )
+    assert state.player.slot_1.stat_stages.atk == 2
+    assert state.player.slot_1.stat_stages.def_ == -4
+    assert state.player.slot_1.stat_stages.spa == 3
+    assert state.player.slot_1.stat_stages.spd == -5
+
+    state = apply_event(
+        state,
+        StatStageOperationEvent(
+            raw_text=(
+                "Garchomp switched all changes to its Defense and Sp. Def "
+                "with its target!"
+            ),
+            operation="swap_defensive",
+            pokemon=player,
+            target=opponent,
+        ),
+    )
+    assert state.player.slot_1.stat_stages.def_ == 4
+    assert state.player.slot_1.stat_stages.spd == 5
+    assert state.player.slot_1.stat_stages.atk == 2
+    assert state.opponent.slot_1 is not None
+    assert state.opponent.slot_1.stat_stages.def_ == -4
+    assert state.opponent.slot_1.stat_stages.spd == -5
+    assert state.opponent.slot_1.stat_stages.atk == -2
+
+    state = apply_event(
+        state,
+        StatStageOperationEvent(
+            raw_text="All stat changes were eliminated!",
+            operation="clear_all",
+        ),
+    )
+    assert state.player.slot_1.stat_stages == StatStages()
+    assert state.opponent.slot_1.stat_stages == StatStages()
+
+
+def test_item_transfer_and_move_restrictions_are_tracked() -> None:
+    state = _game_state(
+        player_slot_1=_active("Garchomp"),
+        opponent_slot_1=_active("Incineroar", revealed_item="Sitrus Berry"),
+    )
+    player = _poke("Garchomp")
+    opponent = _poke("Incineroar", "opponent")
+    state = apply_event(
+        state,
+        HeldItemChangedEvent(
+            raw_text="Garchomp ate its Lum Berry!",
+            change="consumed",
+            pokemon=player,
+            item="Lum Berry",
+        ),
+    )
+    assert state.player.slot_1 is not None
+    assert state.player.slot_1.revealed_item == "Lum Berry"
+    assert state.player.slot_1.item_state == "consumed"
+
+    state = apply_event(
+        state,
+        HeldItemChangedEvent(
+            raw_text="Garchomp stole Incineroar's Sitrus Berry!",
+            change="stolen",
+            pokemon=player,
+            source=opponent,
+            item="Sitrus Berry",
+        ),
+    )
+    assert state.player.slot_1 is not None
+    assert state.player.slot_1.revealed_item == "Sitrus Berry"
+    assert state.player.slot_1.item_state == "held"
+    assert state.opponent.slot_1 is not None
+    assert state.opponent.slot_1.item_state == "lost"
+
+    forced = MoveAvailabilityChangedEvent(
+        raw_text="Garchomp can only use Outrage!",
+        restriction="forced_move",
+        pokemon=player,
+        move="Outrage",
+        source_item="Choice Scarf",
+        clears_on_switch=True,
+    )
+    state = apply_event(state, forced)
+    state = apply_event(state, forced)
+    cooldown = MoveAvailabilityChangedEvent(
+        raw_text="Outrage can't be used twice in a row!",
+        restriction="cooldown",
+        pokemon=player,
+        move="Outrage",
+        clears_on_switch=False,
+    )
+    state = apply_event(state, cooldown)
+
+    restrictions = state.player.slot_1.move_restrictions
+    assert len(restrictions) == 2
+    assert restrictions[0].restriction == "forced_move"
+    assert restrictions[0].source_item == "Choice Scarf"
+    assert restrictions[0].clears_on_switch is True
+    assert restrictions[1].restriction == "cooldown"
+    assert restrictions[1].clears_on_switch is False
+
+
+def test_room_effects_and_implicit_perish_targets_tick() -> None:
+    state = _game_state(
+        player_slot_1=_active("Garchomp"),
+        player_slot_2=_active("Sinistcha"),
+        opponent_slot_1=_active("Incineroar"),
+        opponent_slot_2=_active("Whimsicott"),
+    )
+    effect_fields = {
+        "gravity": "gravity_turns",
+        "magic_room": "magic_room_turns",
+        "wonder_room": "wonder_room_turns",
+    }
+    for effect, field in effect_fields.items():
+        state = apply_event(
+            state,
+            FieldEffectChangedEvent(
+                raw_text=f"{effect} started",
+                effect=effect,  # type: ignore[arg-type]
+                action="start",
+            ),
+        )
+        assert getattr(state.field, field) == 5
+
+    state = apply_event(state, TurnStartEvent(raw_text="Turn 2", turn_number=2))
+    for field in effect_fields.values():
+        assert getattr(state.field, field) == 4
+
+    state = apply_event(
+        state,
+        PerishSongStartedEvent(
+            raw_text="All Pokémon that heard the song will faint in three turns!",
+        ),
+    )
+    assert state.player.slot_1 is not None
+    assert state.player.slot_2 is not None
+    assert state.opponent.slot_1 is not None
+    assert state.opponent.slot_2 is not None
+    assert {
+        state.player.slot_1.perish_turns,
+        state.player.slot_2.perish_turns,
+        state.opponent.slot_1.perish_turns,
+        state.opponent.slot_2.perish_turns,
+    } == {3}
+
+    state = apply_event(state, TurnStartEvent(raw_text="Turn 3", turn_number=3))
+    assert state.player.slot_1.perish_turns == 2
+    assert state.opponent.slot_1.perish_turns == 2
+
+    for effect, field in effect_fields.items():
+        state = apply_event(
+            state,
+            FieldEffectChangedEvent(
+                raw_text=f"{effect} ended",
+                effect=effect,  # type: ignore[arg-type]
+                action="end",
+            ),
+        )
+        assert getattr(state.field, field) == 0
+
+
+def test_safeguard_hazards_and_perish_faint_lifecycle() -> None:
+    state = _game_state(
+        player_slot_1=_active("Garchomp"),
+        opponent_slot_1=_active("Incineroar"),
+    )
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Your side became cloaked in a mystical veil!",
+            side="player",
+            condition="safeguard",
+        ),
+    )
+    assert state.player.safeguard_turns == 5
+
+    for _ in range(2):
+        state = apply_event(
+            state,
+            SideConditionEvent(
+                raw_text="Toxic Spikes were scattered!",
+                side="opponent",
+                condition="toxic_spikes",
+            ),
+        )
+    assert state.opponent.hazards.toxic_spikes == 2
+    state = apply_event(
+        state,
+        SideConditionEvent(
+            raw_text="Toxic Spikes disappeared!",
+            side="opponent",
+            condition="toxic_spikes",
+            action="end",
+        ),
+    )
+    assert state.opponent.hazards.toxic_spikes == 0
+
+    state = apply_event(
+        state,
+        PerishSongStartedEvent(
+            raw_text="All Pokémon that heard the song will faint in three turns!",
+            affected=[_poke("Garchomp")],
+        ),
+    )
+    for turn in range(2, 5):
+        state = apply_event(
+            state,
+            TurnStartEvent(raw_text=f"Turn {turn}", turn_number=turn),
+        )
+    assert state.player.slot_1 is not None
+    assert state.player.slot_1.perish_turns == 0
+    assert state.player.slot_1.hp_percentage == 0

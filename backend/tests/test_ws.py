@@ -8,7 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.schema.battle_log import TurnStartEvent
+from app.schema.battle_log import MoveFailedEvent, MoveUsedEvent, TurnStartEvent
+from app.schema.common import Pokemon
 from app.schema.gamestate import (
     ActivePokemon,
     BenchedPokemon,
@@ -19,8 +20,13 @@ from app.schema.gamestate import (
     StatStages,
 )
 from app.schema.suggestions import TeamPreviewSuggestion
-from app.services.session import BattlePhase, session_store
-from app.services.ws_hub import flatten_battle_logs, snapshot_payload, ws_hub
+from app.services.session import BattlePhase, SessionStore, session_store
+from app.services.ws_hub import (
+    flatten_battle_logs,
+    publish_log_patched,
+    snapshot_payload,
+    ws_hub,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -187,3 +193,63 @@ async def test_ws_hub_broadcasts_to_connected_clients() -> None:
         ]
     finally:
         ws_hub._connections.discard(fake)  # type: ignore[arg-type]
+
+
+def test_publish_log_patched_includes_event_location(monkeypatch) -> None:
+    messages: list[dict] = []
+    monkeypatch.setattr(ws_hub, "publish", messages.append)
+    event = MoveFailedEvent(
+        raw_text="But it failed!",
+        actor=Pokemon(species="Staraptor", side="player", slot=2),
+        move="Protect",
+        reason="failed",
+    )
+
+    publish_log_patched(3, 4, event)
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert message["type"] == "log_patched"
+    payload = message["payload"]
+    assert payload["turn"] == 3
+    assert payload["index"] == 4
+    assert payload["event"]["type"] == "move_failed"
+    assert payload["event"]["actor"] == {
+        "species": "Staraptor",
+        "side": "player",
+        "slot": 2,
+    }
+    assert payload["event"]["move"] == "Protect"
+
+
+def test_session_publishes_completer_patch_with_turn_and_index(monkeypatch) -> None:
+    import app.services.ws_hub as ws_hub_module
+
+    patches: list[tuple[int, int, MoveFailedEvent]] = []
+    monkeypatch.setattr(
+        ws_hub_module,
+        "publish_log_patched",
+        lambda turn, index, event: patches.append((turn, index, event)),
+    )
+    monkeypatch.setattr(ws_hub_module, "publish_log", lambda _event: None)
+    monkeypatch.setattr(ws_hub_module, "publish_state", lambda _store: None)
+
+    store = SessionStore()
+    store.append_battle_log(TurnStartEvent(raw_text="Turn 1", turn_number=1))
+    store.append_battle_log(
+        MoveUsedEvent(
+            raw_text="Staraptor used Protect!",
+            actor=Pokemon(species="Staraptor", side="player", slot=1),
+            move="Protect",
+            targets=[],
+        )
+    )
+    store.append_battle_log(MoveFailedEvent(raw_text="But it failed!"))
+
+    assert len(patches) == 1
+    turn, index, event = patches[0]
+    assert (turn, index) == (1, 2)
+    assert event.type == "move_failed"
+    assert event.actor is not None
+    assert event.actor.species == "Staraptor"
+    assert event.move == "Protect"

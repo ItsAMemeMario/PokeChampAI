@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3.6-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 
 
 def create_gemini_service(
@@ -40,7 +41,6 @@ def create_gemini_service(
     Pass an explicit ``client`` (as tests do) to force the real service without a key.
     """
     from app.services.mock_gemini import MockGeminiService
-
     resolved_key = (
         api_key if api_key is not None else os.environ.get("GEMINI_API_KEY", "")
     ).strip()
@@ -104,8 +104,11 @@ class GeminiService:
         *,
         input: str | list[dict[str, Any]],
         response_schema: dict[str, Any],
+        initial_delay: float = 1.0,
+        max_delay: float = 10.0,
+        backoff_factor: float = 2.0,
     ) -> str:
-        """Create an interaction, chaining to the prior turn when available."""
+        """Create an interaction, chaining to the prior turn when available. Retries until success."""
         kwargs: dict[str, Any] = {
             "model": self._model,
             "input": input,
@@ -113,9 +116,25 @@ class GeminiService:
         }
         if self._interaction_id:
             kwargs["previous_interaction_id"] = self._interaction_id
-        interaction = await self._client.aio.interactions.create(**kwargs)
-        self._interaction_id = interaction.id
-        return interaction.output_text or "{}"
+
+        delay = initial_delay
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                interaction = await self._client.aio.interactions.create(**kwargs)
+                self._interaction_id = interaction.id
+                return interaction.output_text or "{}"
+            except Exception as exc:
+                logger.warning(
+                    "Gemini interaction attempt %d failed (%s: %s). Retrying in %.1fs...",
+                    attempt,
+                    type(exc).__name__,
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * backoff_factor, max_delay)
 
     async def identify_opponent_species(self, image: np.ndarray) -> list[str]:
         """Identify six opponent species from team-preview sprite crops."""
